@@ -1,0 +1,88 @@
+{
+  "id": "/",
+  "name": "Oceans Symphony",
+  "short_name": "Oceans",
+  "scope": "/",
+  "prefer_related_applications": false,
+  "description": "A private, local-first journaling and daily organizer for plural and multi-identity users. All data stays on your device.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0A0E17",
+  "theme_color": "#38BDF8",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshot-home.jpg",
+      "sizes": "1079x2045",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Home dashboard with fronting status and feature grid"
+    },
+    {
+      "src": "/screenshot-support.jpg",
+      "sizes": "1079x2048",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Personal notes and quick reference tools"
+    },
+    {
+      "src": "/screenshot-onboarding.jpg",
+      "sizes": "1079x2048",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Welcome tour introducing Oceans Symphony"
+    }
+  ],
+  "categories": ["lifestyle", "productivity", "utilities"],
+  "lang": "en",
+  "shortcuts": [
+    {
+      "name": "Quick Check-In",
+      "short_name": "Check-In",
+      "description": "Log emotions and a quick status note",
+      "url": "/?action=quick-checkin",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Set Fronters",
+      "short_name": "Fronters",
+      "description": "Update who's currently fronting",
+      "url": "/?action=set-front",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Journals",
+      "short_name": "Journals",
+      "description": "Open the journals page",
+      "url": "/journals",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Tasks",
+      "short_name": "Tasks",
+      "description": "Open today's tasks",
+      "url": "/tasks",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}
