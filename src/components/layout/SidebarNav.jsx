@@ -1,0 +1,278 @@
+import { openSystemSwitcher } from "@/components/systems/SystemSwitcherSheet";
+import { base44 } from "@/api/base44Client";
+import { useQuery } from "@tanstack/react-query";
+import { pickPrimarySystemSettings } from "@/lib/systemSettingsSingleton";
+import { applySidebarConfig } from "@/utils/navigationConfig";
+import React, { useEffect, useMemo } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useTerms } from "@/lib/useTerms";
+import { Users, Clock, BarChart2, Settings, BookOpen, CheckSquare, Sparkles, Activity, Zap, GitBranch, GitMerge, FileText, Heart, Bell, Vote, Shield, X, MapPin, UserRound, ShoppingCart, HelpCircle, MessageSquare, Images, ClipboardList, Megaphone, Contact, CalendarRange, History, LayoutGrid } from "lucide-react";
+import { usePendingReminderInstances } from "@/lib/remindersScheduler";
+import { cn } from "@/lib/utils";
+
+export function buildSidebarGroups(altersLabel, systemLabel) {
+  return [
+    {
+      label: systemLabel,
+      items: [
+        { id: "alters",   label: altersLabel,    icon: Users,         path: "/Home" },
+        { id: "presences",label: "New Presences",icon: Sparkles,      path: "/presences" },
+        { id: "chat",     label: `${systemLabel} Chat`, icon: MessageSquare, path: "/chat" },
+        { id: "groups",   label: "Groups",       icon: Users,         path: "/groups" },
+        { id: "assets",   label: "Assets", icon: Images,        path: "/assets" },
+        { id: "system-history", label: `${systemLabel} History`, icon: GitMerge, path: "/system-history" },
+        { id: "contacts", label: "Contacts",     icon: Contact,       path: "/contacts" },
+        { id: "settings", label: "Settings",     icon: Settings,      path: "/settings" },
+      ],
+    },
+    {
+      label: "Tracking",
+      items: [
+        { id: "checkin-log", label: "Check-In Log",            icon: Heart,       path: "/checkin-log" },
+        { id: "activities",  label: "Activities",              icon: Zap,         path: "/activities" },
+        { id: "planner",     label: "Planner",                 icon: CalendarRange, path: "/planner" },
+        { id: "tasks",       label: "Daily Tasks",             icon: CheckSquare, path: "/tasks" },
+        { id: "todo",        label: "To-Do List",              icon: ClipboardList, path: "/todo" },
+        { id: "sleep",             label: "Sleep",            icon: Activity, path: "/sleep" },
+        { id: "location-history", label: "Locations",         icon: MapPin,   path: "/location-history" },
+        { id: "history-archive",  label: "Recent changes",    icon: History,  path: "/history" },
+        { id: "timeline",    label: "Timeline",                icon: Clock,    path: "/timeline" },
+      ],
+    },
+    {
+      label: "Journal & Content",
+      items: [
+        { id: "journals",  label: "Journals",       icon: BookOpen,   path: "/journals" },
+        { id: "bulletins", label: "Bulletin Board", icon: Megaphone,  path: "/bulletins" },
+        { id: "polls",     label: "Polls",          icon: Vote,       path: "/polls" },
+        { id: "checkin",   label: `${systemLabel} Meeting`, icon: Sparkles, path: "/system-checkin" },
+        { id: "friends",   label: "Friends",        icon: UserRound,  path: "/friends" },
+      ],
+    },
+    {
+      label: "Tools",
+      items: [
+        { id: "reminders",      label: "Reminders",       icon: Bell,       path: "/reminders" },
+        { id: "therapy-report", label: "Therapy Report",  icon: FileText,   path: "/therapy-report" },
+        { id: "support",        label: "Support & Learn", icon: BookOpen,   path: "/grounding" },
+        { id: "safety-plan",    label: "Safety Plan",     icon: Shield,     path: "/safety-plan" },
+        { id: "unblend",        label: "Help me unblend", icon: HelpCircle, path: "/unblend" },
+        { id: "get-to-know-me", label: "Get to know me",  icon: Sparkles,   path: "/get-to-know-me" },
+      ],
+    },
+    {
+      label: "Analytics",
+      items: [
+        { id: "analytics",       label: "Analytics",          icon: BarChart2,  path: "/analytics" },
+        { id: "system-map",     label: `${systemLabel} Map`, icon: GitBranch,  path: "/system-map" },
+      ],
+    },
+  ];
+}
+
+export default function SidebarNav({ open, onClose }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const terms = useTerms();
+
+  // List ⇄ grid: hop over to the app drawer (the grid of every page with
+  // folders). The drawer lives inside the home canvas, so away from "/"
+  // we park the same sessionStorage key the canvas consumes on mount and
+  // ride home first.
+  const openAppGrid = () => {
+    onClose();
+    if (location.pathname === "/") {
+      window.dispatchEvent(new CustomEvent("os-classic-open-apps"));
+    } else {
+      try { sessionStorage.setItem("symphony_classic_open-apps", String(Date.now())); } catch { /* non-fatal */ }
+      navigate("/");
+    }
+  };
+  const { data: pendingInstances = [] } = usePendingReminderInstances();
+  const pendingCount = pendingInstances.filter(i => i.status === "fired").length;
+
+  // User's sidebar customization (Settings → Navigation → Sidebar): hidden
+  // pages and in-group order. Same config the desktop sidebar reads.
+  const { data: settingsRows = [] } = useQuery({
+    queryKey: ["systemSettings"],
+    queryFn: () => base44.entities.SystemSettings.list(),
+  });
+  const sidebarCfg = (pickPrimarySystemSettings(settingsRows) || settingsRows[0])?.navigation_config?.sidebar;
+  const groups = useMemo(
+    () => applySidebarConfig(buildSidebarGroups(terms.Alters, terms.System), sidebarCfg),
+    [terms.Alters, terms.System, sidebarCfg]
+  );
+
+  // Close on navigation
+  // Close when the route CHANGES — not on mount. Running on mount too made
+  // any conditionally-mounted use of this drawer close itself instantly.
+  const firstRouteRef = React.useRef(true);
+  useEffect(() => {
+    if (firstRouteRef.current) { firstRouteRef.current = false; return; }
+    onClose();
+  }, [location.pathname]);  
+
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  // Lock body scroll while open
+  useEffect(() => {
+    document.body.style.overflow = open ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [open]);
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className={cn(
+          // lg:hidden (not sm:) — must match the hamburger's own breakpoint.
+          // The mobile header (and its menu button) shows below lg (1024px),
+          // but this drawer was hidden above sm (640px), so portrait tablets
+          // had a button that opened an invisible drawer (tester report).
+          "fixed inset-0 z-[100] bg-background/60 backdrop-blur-sm lg:hidden transition-opacity duration-300",
+          open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+        )}
+        onClick={onClose}
+        aria-hidden="true"
+      />
+
+      {/* Drawer */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Navigation menu"
+        className={cn(
+          "fixed top-0 left-0 z-[101] w-72 bg-background border-r border-border/50 flex flex-col transition-transform duration-300 ease-in-out lg:hidden",
+          open ? "translate-x-0" : "-translate-x-full"
+        )}
+        // 100dvh, NOT h-full: h-full on a fixed element is the LARGE
+        // viewport height, so whenever a browser URL bar / system chrome is
+        // showing, the drawer's bottom hangs below the visible screen and
+        // the last nav option can never be scrolled into view (tester
+        // report). dvh tracks the real visible height.
+        style={{ height: "100dvh" }}
+      >
+        {/* Safe-area + header */}
+        {/* Top inset CLAMPED: a device reporting a garbage inset (notification
+            shade half-open, split-screen, WebView quirk) used to paint a tall
+            empty band here that covered the header + first section (tester's
+            "rectangle of unused space"). No real status bar/cutout exceeds
+            ~56px; 64px covers them all. */}
+        <div style={{ paddingTop: "min(env(safe-area-inset-top, 0px), 64px)" }} className="bg-background/95 backdrop-blur-xl border-b border-border/50 flex-shrink-0">
+          <div className="flex items-center justify-between px-4 h-14">
+            {/* App icon → the system switcher (switch / side systems /
+                create — owner spec); the title text stays the quick way
+                home. */}
+            <span className="flex items-center gap-1 select-none min-h-[44px] -ml-1">
+              <button
+                type="button"
+                onClick={() => { onClose?.(); openSystemSwitcher(); }}
+                className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-xl hover:bg-muted/50 transition-colors"
+                aria-label="Switch or manage systems"
+                title="Switch or manage systems"
+              >
+                <img src="/logo.png" className="w-6 h-6 object-contain rounded-md" alt="logo" />
+              </button>
+              <Link
+                to="/"
+                onClick={onClose}
+                className="px-1 rounded-xl hover:bg-muted/50 transition-colors"
+                aria-label="Go to dashboard"
+              >
+                <span className="font-display text-base font-semibold text-foreground">Navigation</span>
+              </Link>
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                data-tour="nav-grid-toggle"
+                onClick={openAppGrid}
+                aria-label="Switch to the app grid"
+                title="App grid"
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              >
+                <LayoutGrid className="w-5 h-5" />
+              </button>
+              {/* Grocery list / privacy cover — relocated from the
+                  dashboard header. Still openable via triple-tap or
+                  the quick-action shortcuts. */}
+              <button
+                data-tour="grocery-list-button"
+                onClick={() => {
+                  onClose();
+                  window.dispatchEvent(new CustomEvent("open-grocery-list"));
+                }}
+                aria-label="Grocery list (also acts as a privacy cover; triple-tap anywhere to open)"
+                title="Grocery list · triple-tap anywhere to open"
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              >
+                <ShoppingCart className="w-5 h-5" />
+              </button>
+              <button
+                onClick={onClose}
+                aria-label="Close menu"
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Scrollable nav list. Bottom padding must include the safe-area
+            inset: with edge-to-edge rendering (iOS home indicator, Android
+            gesture pill) the drawer extends behind the system UI, and
+            without the inset the last rows (System Map) could never scroll
+            clear of it. */}
+        <div
+          className="flex-1 overflow-y-auto overscroll-contain px-3 pt-4 space-y-5"
+          // Clear whatever bottom chrome is on screen (classic nav or the v2
+          // bar with its drawer open) plus room to breathe, so the last
+          // group is always reachable and never sits under the bar.
+          style={{ paddingBottom: "calc(var(--bottom-nav-height, 56px) + var(--os-sab) + 1.5rem)" }}
+        >
+          {groups.map(({ label, items }) => (
+            <div key={label}>
+              <p className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground px-2 mb-1.5">
+                {label}
+              </p>
+              <div className="space-y-0.5">
+                {items.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = item.path === "/"
+                    ? location.pathname === "/"
+                    : location.pathname.startsWith(item.path);
+                  return (
+                    <Link
+                      key={item.id}
+                      to={item.path}
+                      aria-current={isActive ? "page" : undefined}
+                      className={cn(
+                        "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors",
+                        isActive
+                          ? "bg-primary/10 text-primary"
+                          : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                      )}
+                    >
+                      <Icon className="w-4 h-4 flex-shrink-0" />
+                      <span className="flex-1">{item.label}</span>
+                      {item.id === "reminders" && pendingCount > 0 && (
+                        <span className="w-5 h-5 bg-red-500 text-white rounded-full text-[0.5625rem] font-bold flex items-center justify-center">
+                          {pendingCount > 9 ? "9+" : pendingCount}
+                        </span>
+                      )}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
