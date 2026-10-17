@@ -63,16 +63,23 @@ export function extractPerAlterEntries(sessions, { alterId } = {}) {
       : null;
     const noteList = parseSessionNote(s.note);
     const rowTrigger = noteList.length === 0 ? trigger : null;
+    // Legacy sessions (no note carries its own stamp): the session-level
+    // emotions/trigger most plausibly belong to the LATEST note only, so
+    // older notes in that session stay clean. Once any note is stamped the
+    // per-note data is authoritative and there is no fallback.
+    const anyStamped = noteList.some((n) => n && (n.emotions || n.trigger));
+    const sessionEmotions = parseSessionEmotions(s.session_emotions);
     for (const [i, n] of noteList.entries()) {
+      const legacyLast = !anyStamped && i === noteList.length - 1;
       out.push({
         id: `pa-note-${s.id}-${i}`,
         kind: "note",
         ts: n.timestamp || sessionTs,
         sessionId: s.id,
         alterId: sessionAlter,
-        payload: { text: n.text || "", emotions: Array.isArray(n.emotions) ? n.emotions : [] },
+        payload: { text: n.text || "", emotions: Array.isArray(n.emotions) ? n.emotions : (legacyLast ? sessionEmotions : []) },
         // Per-note only: older notes without a stamp show nothing.
-        trigger: n.trigger || null,
+        trigger: n.trigger || (legacyLast ? trigger : null),
       });
     }
 

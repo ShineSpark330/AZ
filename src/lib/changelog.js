@@ -22,7 +22,7 @@ export const CHANGELOG = [
     changes: [
       { type: "fix", text: "Check-In Log: the mood dot now also shows in each day's Per-{{alter}} summary (it only appeared on the editable entries below it before), so the summary and the entries match." },
       { type: "fix", text: "Check-In Log: a triggered {{switch}} now shows a caution icon on the {{alter}}'s entries and in the Per-{{alter}} summary — it was saved but never displayed." },
-      { type: "fix", text: "Check-In Log: mood dots and the caution icon now belong to the individual note they were written with. Older notes no longer pick up the emotions / trigger set later on the same session." },
+      { type: "fix", text: "Check-In Log: mood dots and the caution icon now belong to the individual note they were written with. Older notes no longer pick up the emotions / trigger set later on the same session (for notes written before this, only the latest note in a session keeps them)." },
       { type: "improve", text: "Check-In Log: a note shows one mood dot per kind of emotion it has (red, green, gray, orange) — only the kinds present, all four if it has all four." },
     ],
   },
