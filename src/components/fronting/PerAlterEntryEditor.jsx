@@ -16,6 +16,14 @@ import { useTerms } from "@/lib/useTerms";
 // dashboard, but the save REPLACES the underlying values instead
 // of appending — so re-saving a check-in log row updates what's
 // there rather than spawning a new note alongside it.
+// ISO -> value for <input type="datetime-local"> in the user's local time.
+function toLocalInput(iso) {
+  const d = iso ? new Date(iso) : null;
+  if (!d || isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 const TRIGGER_CATEGORIES = [
   { id: "sensory",         label: "Sensory",        emoji: "👂", hint: "loud noise, smell, touch" },
   { id: "emotional",       label: "Emotional",      emoji: "💙", hint: "grief, fear, loneliness" },
@@ -36,12 +44,16 @@ export default function PerAlterEntryEditor({ isOpen, onClose, entry, alter, foc
 
   const [note, setNote] = useState("");
   const [noteEditIndex, setNoteEditIndex] = useState(null);
+  const [noteWhen, setNoteWhen] = useState("");
   const [localEmotions, setLocalEmotions] = useState([]);
   const [symptomValues, setSymptomValues] = useState({});
   const [showEmotions, setShowEmotions] = useState(focusKind === "emotion");
   const [showSymptoms, setShowSymptoms] = useState(focusKind === "symptom");
   const [showTrigger, setShowTrigger] = useState(false);
   const [triggerCategory, setTriggerCategory] = useState("");
+  // What the editor loaded for this entry (per-note stamp, else legacy
+  // session values) — used to tell whether the user actually changed it.
+  const [loaded, setLoaded] = useState({ emotions: [], trigOn: false, trigCat: "", trigLabel: "" });
   const [triggerLabel, setTriggerLabel] = useState("");
 
   const { data: symptoms = [] } = useQuery({
@@ -111,11 +123,29 @@ export default function PerAlterEntryEditor({ isOpen, onClose, entry, alter, foc
         } catch { /* note is non-array legacy */ }
         setNote(noteText);
         setNoteEditIndex(noteIdx);
+        try { setNoteWhen(noteIdx != null ? toLocalInput(JSON.parse(s?.note || "[]")[noteIdx]?.timestamp) : ""); } catch { setNoteWhen(""); }
 
-        try {
-          const emos = JSON.parse(s?.session_emotions || "[]");
-          setLocalEmotions(Array.isArray(emos) ? emos : []);
-        } catch { setLocalEmotions([]); }
+        // Emotions + trigger: a note carries its OWN stamp. Legacy notes
+        // (nothing stamped in the session) fall back to the session values
+        // for the latest note only — same rule the Check-In Log uses.
+        const parseArr = (raw) => { try { const v = JSON.parse(raw || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } };
+        const sessEmos = parseArr(s?.session_emotions);
+        const sessTrig = s?.is_triggered_switch
+          ? { category: s.trigger_category || "", label: s.trigger_label || "" } : null;
+        let emos = sessEmos;
+        let trig = sessTrig;
+        if (noteIdx != null) {
+          const arr = parseArr(s?.note);
+          const own = arr[noteIdx] || {};
+          const legacyLast = !Array.isArray(own.emotions) && noteIdx === arr.length - 1;
+          emos = Array.isArray(own.emotions) ? own.emotions : (legacyLast ? sessEmos : []);
+          trig = own.trigger || (legacyLast ? sessTrig : null);
+        }
+        setLocalEmotions(emos);
+        setShowTrigger(!!trig);
+        setTriggerCategory(trig?.category || "");
+        setTriggerLabel(trig?.label || "");
+        setLoaded({ emotions: emos, trigOn: !!trig, trigCat: trig?.category || "", trigLabel: trig?.label || "" });
 
         // session_symptoms historically saves as either:
         //   - an array of { id, label, value, type } (per AlterPanel)
@@ -132,10 +162,6 @@ export default function PerAlterEntryEditor({ isOpen, onClose, entry, alter, foc
             setSymptomValues({});
           }
         } catch { setSymptomValues({}); }
-
-        setShowTrigger(!!s?.is_triggered_switch);
-        setTriggerCategory(s?.trigger_category || "");
-        setTriggerLabel(s?.trigger_label || "");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -181,15 +207,16 @@ export default function PerAlterEntryEditor({ isOpen, onClose, entry, alter, foc
       // existing note, keep its stamp unless the user actually changed the
       // emotions/trigger here (so merely fixing a typo in an older note
       // doesn't stamp it with today's session-level values).
-      const origEmotions = (() => { try { const e = JSON.parse(session.session_emotions || "[]"); return Array.isArray(e) ? e : []; } catch { return []; } })();
-      const emotionsChanged = JSON.stringify(origEmotions) !== JSON.stringify(localEmotions);
-      const triggerChanged = !!session.is_triggered_switch !== !!(showTrigger && triggerCategory)
-        || (session.trigger_category || "") !== (showTrigger ? triggerCategory : "")
-        || (session.trigger_label || "") !== (showTrigger ? triggerLabel : "");
+      const emotionsChanged = JSON.stringify(loaded.emotions) !== JSON.stringify(localEmotions);
+      const triggerChanged = loaded.trigOn !== showTrigger
+        || (showTrigger && ((loaded.trigCat || "") !== (triggerCategory || "") || (loaded.trigLabel || "") !== (triggerLabel || "")));
       const newStamp = () => {
         const st = {};
-        if (localEmotions.length > 0) st.emotions = [...localEmotions];
-        if (showTrigger && triggerCategory) st.trigger = { category: triggerCategory, label: triggerLabel };
+        st.emotions = [...localEmotions];
+        st.trigger = null;
+        // Category is optional — toggling the caution on (with or without a
+        // category / description) must save, so default to "unknown".
+        if (showTrigger) st.trigger = { category: triggerCategory || "unknown", label: triggerLabel };
         return st;
       };
       if (noteEditIndex != null && noteEditIndex >= 0 && noteEditIndex < noteArr.length) {
@@ -197,8 +224,16 @@ export default function PerAlterEntryEditor({ isOpen, onClose, entry, alter, foc
           noteArr = noteArr.map((n, i) => {
             if (i !== noteEditIndex) return n;
             const next = { ...n, text: cleanText };
-            if (emotionsChanged) { delete next.emotions; if (localEmotions.length > 0) next.emotions = [...localEmotions]; }
-            if (triggerChanged) { delete next.trigger; const st = newStamp(); if (st.trigger) next.trigger = st.trigger; }
+            // Legacy (unstamped) notes get stamped on save so what the editor
+            // showed is what stays; stamped notes only change if edited.
+            const legacy = !Array.isArray(n.emotions);
+            const st = newStamp();
+            if (legacy || emotionsChanged) next.emotions = st.emotions;
+            if (legacy || triggerChanged) next.trigger = st.trigger;
+            if (noteWhen) {
+              const t = new Date(noteWhen);
+              if (!isNaN(t.getTime()) && noteWhen !== toLocalInput(n.timestamp)) next.timestamp = t.toISOString();
+            }
             return next;
           });
         } else {
@@ -228,11 +263,9 @@ export default function PerAlterEntryEditor({ isOpen, onClose, entry, alter, foc
       // Trigger metadata — toggled off clears, on writes the picked
       // category + label.
       if (showTrigger) {
-        if (triggerCategory) {
-          updates.is_triggered_switch = true;
-          updates.trigger_category = triggerCategory;
-          updates.trigger_label = triggerLabel;
-        }
+        updates.is_triggered_switch = true;
+        updates.trigger_category = triggerCategory || "unknown";
+        updates.trigger_label = triggerLabel;
       } else {
         updates.is_triggered_switch = false;
         updates.trigger_category = "";
@@ -267,6 +300,17 @@ export default function PerAlterEntryEditor({ isOpen, onClose, entry, alter, foc
             <div className="p-6 text-center text-sm text-muted-foreground">Session not found.</div>
           ) : (
             <>
+              {noteEditIndex != null && (
+                <div className="px-4 pt-4 flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>Date &amp; time</span>
+                  <input
+                    type="datetime-local"
+                    value={noteWhen}
+                    onChange={(e) => setNoteWhen(e.target.value)}
+                    className="flex-1 min-w-0 bg-background border border-border/60 rounded-md px-2 py-1 text-sm text-foreground"
+                  />
+                </div>
+              )}
               <div className="px-4 pt-4 pb-2">
                 <MentionTextarea
                   value={note}

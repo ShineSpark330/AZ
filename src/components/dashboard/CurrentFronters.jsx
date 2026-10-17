@@ -371,9 +371,10 @@ export function AlterPanel({ alter, session, onClose, onSaved, participant, onCh
         try { const parsed = JSON.parse(session.note || "[]"); existing = Array.isArray(parsed) ? parsed : []; } catch {}
         // Stamp this note with its OWN emotions + trigger so older notes
         // never inherit what's set later.
-        const stamp = {};
-        if (localEmotions.length > 0) stamp.emotions = [...localEmotions];
-        if (showTrigger && triggerCategory) stamp.trigger = { category: triggerCategory, label: triggerLabel };
+        const stamp = {
+          emotions: [...localEmotions],
+          trigger: showTrigger ? { category: triggerCategory || "unknown", label: triggerLabel } : null,
+        };
         updates.note = JSON.stringify([...existing, { text: cleanNote, timestamp: nowIso, ...stamp }]);
       }
 
@@ -390,9 +391,9 @@ export function AlterPanel({ alter, session, onClose, onSaved, participant, onCh
         .filter(Boolean);
       if (symptomArr.length > 0) updates.session_symptoms = JSON.stringify(symptomArr);
 
-      if (showTrigger && triggerCategory) {
+      if (showTrigger) {
         updates.is_triggered_switch = true;
-        updates.trigger_category = triggerCategory;
+        updates.trigger_category = triggerCategory || "unknown";
         updates.trigger_label = triggerLabel;
       }
 

@@ -55,7 +55,7 @@ export function moodDot(labels, customEmotions = [], catLabels = {}) {
 // Per-note mood dots: one dot per DISTINCT valence present in the labels,
 // in a fixed order (red, green, gray, orange) so a note with every kind
 // shows all four and a note with only one kind shows just that one.
-// Unknown labels (no valence) add nothing.
+// Unknown labels (no valence) show as orange.
 export function moodDots(labels, customEmotions = [], catLabels = {}) {
   const list = (Array.isArray(labels) ? labels : []).filter(Boolean);
   if (list.length === 0) return [];
@@ -63,8 +63,9 @@ export function moodDots(labels, customEmotions = [], catLabels = {}) {
   const seen = {};
   for (const l of list) {
     const v = valenceOf(l, customEmotions, catLabels);
-    if (!v) continue;
-    const k = byColor[v] ? v : "other";
+    // Unknown / uncategorised labels count as "other" (orange), as the old
+    // single dot did, so a note with emotions never shows no dot at all.
+    const k = v && byColor[v] ? v : "other";
     (seen[k] = seen[k] || []).push(l);
   }
   return ["bad", "good", "neutral", "other"]

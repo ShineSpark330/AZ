@@ -67,10 +67,11 @@ export function extractPerAlterEntries(sessions, { alterId } = {}) {
     // emotions/trigger most plausibly belong to the LATEST note only, so
     // older notes in that session stay clean. Once any note is stamped the
     // per-note data is authoritative and there is no fallback.
-    const anyStamped = noteList.some((n) => n && (n.emotions || n.trigger));
+    // Notes written by the app always carry an `emotions` array (possibly
+    // empty) and a `trigger` key, so "legacy" = no emotions array at all.
     const sessionEmotions = parseSessionEmotions(s.session_emotions);
     for (const [i, n] of noteList.entries()) {
-      const legacyLast = !anyStamped && i === noteList.length - 1;
+      const legacyLast = !Array.isArray(n?.emotions) && i === noteList.length - 1;
       out.push({
         id: `pa-note-${s.id}-${i}`,
         kind: "note",

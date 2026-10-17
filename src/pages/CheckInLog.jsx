@@ -5,10 +5,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44, localEntities } from "@/api/base44Client";
 import { motion } from "framer-motion";
 import { format, parseISO, startOfDay } from "date-fns";
-import { Clock, ChevronDown, ChevronRight, Heart, Trash2, BarChart2, ChevronLeft, MapPin, SlidersHorizontal, Pencil, UserCheck, AlertTriangle } from "lucide-react";
+import { Clock, ChevronDown, ChevronRight, Heart, Trash2, BarChart2, ChevronLeft, MapPin, SlidersHorizontal, Pencil, UserCheck, AlertTriangle, Plus } from "lucide-react";
 import { contactDisplayName } from "@/lib/contacts";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import DiaryAnalyticsSummary from "@/components/diary/DiaryAnalyticsSummary";
 import QuickCheckInModal from "@/components/emotions/QuickCheckInModal";
@@ -1139,10 +1140,91 @@ function LocationEntry({ loc }) {
   );
 }
 
+// ISO -> value for <input type="datetime-local"> in the user's local time.
+function toLocalInput(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  if (isNaN(d.getTime())) return "";
+  return format(d, "yyyy-MM-dd'T'HH:mm");
+}
+
+// Add a standalone note with a chosen date & time (a StatusNote), shown in the
+// log on that day. Optionally signed by an alter.
+function CustomNoteDialog({ open, onClose, alters }) {
+  const qc = useQueryClient();
+  const [text, setText] = useState("");
+  const [when, setWhen] = useState("");
+  const [authorId, setAuthorId] = useState("");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { if (open) { setText(""); setAuthorId(""); setWhen(toLocalInput()); } }, [open]);
+
+  const handleSave = async () => {
+    const t = new Date(when);
+    if (!text.trim()) { toast.error("Note can't be empty"); return; }
+    if (isNaN(t.getTime())) { toast.error("Pick a valid date & time"); return; }
+    setSaving(true);
+    try {
+      const prepared = await prepareAuthoredText(text, { alters, whisper: false, chips: false, surfaceLabel: "status" });
+      if (prepared === null) { setSaving(false); return; }
+      const author = prepared.authorIds?.[0] || authorId || null;
+      const created = await base44.entities.StatusNote.create({
+        timestamp: t.toISOString(), note: prepared.content,
+        ...(author ? { author_alter_id: author } : {}),
+      });
+      try {
+        const { saveStatusMentions } = await import("@/lib/mentionUtils");
+        await saveStatusMentions({ note: prepared.content, alters, sourceId: created?.id, authorAlterId: author });
+        qc.invalidateQueries({ queryKey: ["mentionLogs"] });
+      } catch { /* mentions are best-effort */ }
+      qc.invalidateQueries({ queryKey: ["statusNotes"] });
+      toast.success("Note added");
+      onClose();
+    } catch (e) {
+      if (isLogCommandError(e)) toast.error(e.message); else toast.error(e?.message || "Failed to save");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Add note</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={4}
+            placeholder="Write a note…"
+            className="w-full bg-background border border-border/60 rounded-md px-3 py-2 text-sm"
+          />
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="w-20 flex-shrink-0">Date &amp; time</span>
+            <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)}
+              className="flex-1 min-w-0 bg-background border border-border/60 rounded-md px-2 py-1 text-sm text-foreground" />
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="w-20 flex-shrink-0">Written by</span>
+            <select value={authorId} onChange={(e) => setAuthorId(e.target.value)}
+              className="flex-1 min-w-0 bg-background border border-border/60 rounded-md px-2 py-1 text-sm text-foreground">
+              <option value="">No one in particular</option>
+              {[...(alters || [])].sort((a, b) => String(a.name).localeCompare(String(b.name))).map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+            <Button onClick={handleSave} disabled={saving}>Save</Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function StatusNoteEntry({ sn }) {
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(sn.note || "");
+  const [whenDraft, setWhenDraft] = useState(() => toLocalInput(sn.timestamp));
   const [saving, setSaving] = useState(false);
   const [deleteArmed, setDeleteArmed] = useState(false);
   const disarmRef = useRef(null);
@@ -1151,9 +1233,13 @@ function StatusNoteEntry({ sn }) {
   const handleSave = async () => {
     const next = draft.trim();
     if (!next) { toast.error("Status can't be empty"); return; }
+    const t = new Date(whenDraft);
+    if (isNaN(t.getTime())) { toast.error("Pick a valid date & time"); return; }
+    const patch = { note: next };
+    if (whenDraft !== toLocalInput(sn.timestamp)) patch.timestamp = t.toISOString();
     setSaving(true);
     try {
-      await localEntities.StatusNote.update(sn.id, { note: next });
+      await localEntities.StatusNote.update(sn.id, patch);
       qc.invalidateQueries({ queryKey: ["statusNotes"] });
       setEditing(false);
     } catch (e) { toast.error(e.message || "Failed to save"); }
@@ -1186,10 +1272,16 @@ function StatusNoteEntry({ sn }) {
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") { e.preventDefault(); handleSave(); }
-              if (e.key === "Escape") { setDraft(sn.note || ""); setEditing(false); }
+              if (e.key === "Escape") { setDraft(sn.note || ""); setWhenDraft(toLocalInput(sn.timestamp)); setEditing(false); }
             }}
             className="w-full bg-background border border-border/60 rounded-md px-2 py-1 text-sm"
             placeholder="Edit status…"
+          />
+          <input
+            type="datetime-local"
+            value={whenDraft}
+            onChange={(e) => setWhenDraft(e.target.value)}
+            className="w-full bg-background border border-border/60 rounded-md px-2 py-1 text-sm"
           />
           <div className="flex items-center gap-1.5">
             <button
@@ -1202,7 +1294,7 @@ function StatusNoteEntry({ sn }) {
             </button>
             <button
               type="button"
-              onClick={() => { setDraft(sn.note || ""); setEditing(false); }}
+              onClick={() => { setDraft(sn.note || ""); setWhenDraft(toLocalInput(sn.timestamp)); setEditing(false); }}
               className="text-xs px-2 py-0.5 rounded-md border border-border/60 text-muted-foreground hover:text-foreground"
             >
               Cancel
@@ -1650,6 +1742,7 @@ export default function CheckInLog() {
     queryFn: () => base44.entities.FrontingSession.list("-start_time", 500),
   });
 
+  const [customNoteOpen, setCustomNoteOpen] = useState(false);
   const altersById = useMemo(() => Object.fromEntries(alters.map(a => [a.id, a])), [alters]);
   const symptomsById = useMemo(() => Object.fromEntries(symptoms.map(s => [s.id, s])), [symptoms]);
   const perAlterEntries = useMemo(() => extractPerAlterEntries(frontingSessions), [frontingSessions]);
@@ -1756,6 +1849,9 @@ export default function CheckInLog() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setCustomNoteOpen(true)} className="gap-1.5">
+            <Plus className="w-4 h-4" /> Note
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" data-tour="checkin-log-display" className="gap-1.5">
@@ -1856,6 +1952,7 @@ export default function CheckInLog() {
         alters={alters}
         editingEntry={editingCheckIn}
       />
+      <CustomNoteDialog open={customNoteOpen} onClose={() => setCustomNoteOpen(false)} alters={alters} />
       <DiaryCardEditDialog card={editingDiaryCard} onClose={() => setEditingDiaryCard(null)} />
     </motion.div>
   );
