@@ -55,10 +55,9 @@ export function extractPerAlterEntries(sessions, { alterId } = {}) {
     const sessionTs = s.start_time || s.timestamp;
     if (!sessionTs) continue;
 
-    const sessionEmotions = parseSessionEmotions(s.session_emotions);
-    // Trigger (caution) metadata lives on the session. Attach it to the
-    // notes; emotion/symptom rows only carry it when the session has no
-    // notes, so it's shown once per session rather than repeated.
+    // Notes carry their OWN emotions/trigger (stamped when written), so an
+    // older note never inherits what was set later. Session-level trigger
+    // is only shown on the emotion/symptom row when the session has no notes.
     const trigger = s.is_triggered_switch
       ? { category: s.trigger_category || "", label: s.trigger_label || "" }
       : null;
@@ -71,8 +70,9 @@ export function extractPerAlterEntries(sessions, { alterId } = {}) {
         ts: n.timestamp || sessionTs,
         sessionId: s.id,
         alterId: sessionAlter,
-        payload: { text: n.text || "", emotions: sessionEmotions },
-        trigger,
+        payload: { text: n.text || "", emotions: Array.isArray(n.emotions) ? n.emotions : [] },
+        // Per-note only: older notes without a stamp show nothing.
+        trigger: n.trigger || null,
       });
     }
 

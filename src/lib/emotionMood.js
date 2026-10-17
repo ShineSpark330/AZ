@@ -52,6 +52,26 @@ export function moodDot(labels, customEmotions = [], catLabels = {}) {
   return { color: MOOD_ORANGE, title: `Mood: ${list.join(", ")}` };
 }
 
+// Per-note mood dots: one dot per DISTINCT valence present in the labels,
+// in a fixed order (red, green, gray, orange) so a note with every kind
+// shows all four and a note with only one kind shows just that one.
+// Unknown labels (no valence) add nothing.
+export function moodDots(labels, customEmotions = [], catLabels = {}) {
+  const list = (Array.isArray(labels) ? labels : []).filter(Boolean);
+  if (list.length === 0) return [];
+  const byColor = { bad: MOOD_RED, good: MOOD_GREEN, neutral: MOOD_GRAY, other: MOOD_ORANGE };
+  const seen = {};
+  for (const l of list) {
+    const v = valenceOf(l, customEmotions, catLabels);
+    if (!v) continue;
+    const k = byColor[v] ? v : "other";
+    (seen[k] = seen[k] || []).push(l);
+  }
+  return ["bad", "good", "neutral", "other"]
+    .filter((k) => seen[k])
+    .map((k) => ({ color: byColor[k], title: `Mood: ${seen[k].join(", ")}` }));
+}
+
 // A custom emotion's own colour (hex) if the user set one, else fallback.
 export function customEmotionColor(label, customEmotions = [], fallback = null) {
   const l = String(label || "").toLowerCase();

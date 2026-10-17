@@ -177,9 +177,30 @@ export default function PerAlterEntryEditor({ isOpen, onClose, entry, alter, foc
         noteArr = Array.isArray(parsed) ? parsed : [];
       } catch { noteArr = []; }
       const cleanText = prepared.content.trim();
+      // Per-note stamp: this note's own emotions + trigger. When editing an
+      // existing note, keep its stamp unless the user actually changed the
+      // emotions/trigger here (so merely fixing a typo in an older note
+      // doesn't stamp it with today's session-level values).
+      const origEmotions = (() => { try { const e = JSON.parse(session.session_emotions || "[]"); return Array.isArray(e) ? e : []; } catch { return []; } })();
+      const emotionsChanged = JSON.stringify(origEmotions) !== JSON.stringify(localEmotions);
+      const triggerChanged = !!session.is_triggered_switch !== !!(showTrigger && triggerCategory)
+        || (session.trigger_category || "") !== (showTrigger ? triggerCategory : "")
+        || (session.trigger_label || "") !== (showTrigger ? triggerLabel : "");
+      const newStamp = () => {
+        const st = {};
+        if (localEmotions.length > 0) st.emotions = [...localEmotions];
+        if (showTrigger && triggerCategory) st.trigger = { category: triggerCategory, label: triggerLabel };
+        return st;
+      };
       if (noteEditIndex != null && noteEditIndex >= 0 && noteEditIndex < noteArr.length) {
         if (cleanText) {
-          noteArr = noteArr.map((n, i) => i === noteEditIndex ? { ...n, text: cleanText } : n);
+          noteArr = noteArr.map((n, i) => {
+            if (i !== noteEditIndex) return n;
+            const next = { ...n, text: cleanText };
+            if (emotionsChanged) { delete next.emotions; if (localEmotions.length > 0) next.emotions = [...localEmotions]; }
+            if (triggerChanged) { delete next.trigger; const st = newStamp(); if (st.trigger) next.trigger = st.trigger; }
+            return next;
+          });
         } else {
           noteArr = noteArr.filter((_, i) => i !== noteEditIndex);
         }
@@ -187,7 +208,7 @@ export default function PerAlterEntryEditor({ isOpen, onClose, entry, alter, foc
       } else if (cleanText) {
         // No existing note for this entry but the user typed one —
         // append it.
-        updates.note = JSON.stringify([...noteArr, { text: cleanText, timestamp: new Date().toISOString() }]);
+        updates.note = JSON.stringify([...noteArr, { text: cleanText, timestamp: new Date().toISOString(), ...newStamp() }]);
       } else if (noteEditIndex == null && !cleanText) {
         // Nothing to do for note.
       }

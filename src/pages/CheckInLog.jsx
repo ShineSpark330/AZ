@@ -15,7 +15,7 @@ import QuickCheckInModal from "@/components/emotions/QuickCheckInModal";
 import { getCategoryMeta } from "@/lib/locationCategories";
 import { extractPerAlterEntries } from "@/lib/perAlterSessionEntries";
 import PerAlterEntryEditor from "@/components/fronting/PerAlterEntryEditor";
-import { moodDot, customEmotionColor } from "@/lib/emotionMood";
+import { moodDots, customEmotionColor } from "@/lib/emotionMood";
 import { useEmotionCategoryLabels } from "@/lib/emotionCategories";
 import DiaryCardEditDialog, { deleteDiaryCardWithConfirm } from "@/components/diary/DiaryCardEditDialog";
 import { statusFor, ACTIVITY_STATUSES } from "@/lib/activityStatus";
@@ -124,9 +124,8 @@ function TriggerBadge({ trigger }) {
   const title = `Triggered ${t.switch}${detail ? `: ${detail}` : ""}`;
   return (
     <span role="img" aria-label={title} title={title}
-      className="inline-flex items-center gap-0.5 flex-shrink-0 text-orange-500">
+      className="inline-flex items-center flex-shrink-0 text-orange-500">
       <AlertTriangle className="w-3.5 h-3.5" />
-      {detail && <span className="text-[0.6875rem] text-orange-600 dark:text-orange-400 max-w-[8rem] truncate">{detail}</span>}
     </span>
   );
 }
@@ -741,7 +740,7 @@ function DayTotals({ checkIns, altersById, symptomCheckIns, symptomsById, activi
                   if (e.kind === "note") {
                     pills.push({
                       kind: "note", key: `n-${e.id}`, text: `💬 ${e.payload.text}`,
-                      mood: moodDot(e.payload?.emotions, stripCustoms, stripCatLabels),
+                      moods: moodDots(e.payload?.emotions, stripCustoms, stripCatLabels),
                       trigger: e.trigger,
                     });
                   } else if (e.kind === "emotion") {
@@ -785,11 +784,11 @@ function DayTotals({ checkIns, altersById, symptomCheckIns, symptomsById, activi
                             className="inline-flex items-start gap-1 text-xs px-1.5 py-0.5 rounded-full border text-foreground"
                             style={{ backgroundColor: `${color}33`, borderColor: `${color}99` }}
                           >
-                            {p.mood && (
-                              <span role="img" aria-label={p.mood.title} title={p.mood.title}
+                            {p.moods?.map((m) => (
+                              <span key={m.color} role="img" aria-label={m.title} title={m.title}
                                 className="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1"
-                                style={{ backgroundColor: p.mood.color }} />
-                            )}
+                                style={{ backgroundColor: m.color }} />
+                            ))}
                             <TriggerBadge trigger={p.trigger} />
                             <span className="min-w-0">{p.text}</span>
                           </span>
@@ -1258,7 +1257,7 @@ function PerAlterEntry({ entry, altersById }) {
   const catLabels = useEmotionCategoryLabels();
   // Mood indicator on a note: green / orange / red dot when the alter has
   // an emotion set for this session.
-  const mood = entry.kind === "note" ? moodDot(entry.payload?.emotions, customs, catLabels) : null;
+  const moods = entry.kind === "note" ? moodDots(entry.payload?.emotions, customs, catLabels) : [];
 
   const invalidateAll = () => {
     qc.invalidateQueries({ queryKey: ["frontingSessions"] });
@@ -1319,11 +1318,11 @@ function PerAlterEntry({ entry, altersById }) {
         <StandaloneEntry timestamp={entry.ts} actions={actions}>
           <div className="flex items-start gap-2 min-w-0 w-full">
             <AlterChip />
-            {mood && (
-              <span role="img" aria-label={mood.title} title={mood.title}
+            {moods.map((m) => (
+              <span key={m.color} role="img" aria-label={m.title} title={m.title}
                 className="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5"
-                style={{ backgroundColor: mood.color }} />
-            )}
+                style={{ backgroundColor: m.color }} />
+            ))}
             <TriggerBadge trigger={entry.trigger} />
             <span className="text-sm text-foreground/80 min-w-0">💬 {entry.payload.text}</span>
           </div>

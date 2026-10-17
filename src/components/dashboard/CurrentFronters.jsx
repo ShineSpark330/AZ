@@ -369,7 +369,12 @@ export function AlterPanel({ alter, session, onClose, onSaved, participant, onCh
       if (cleanNote) {
         let existing = [];
         try { const parsed = JSON.parse(session.note || "[]"); existing = Array.isArray(parsed) ? parsed : []; } catch {}
-        updates.note = JSON.stringify([...existing, { text: cleanNote, timestamp: nowIso }]);
+        // Stamp this note with its OWN emotions + trigger so older notes
+        // never inherit what's set later.
+        const stamp = {};
+        if (localEmotions.length > 0) stamp.emotions = [...localEmotions];
+        if (showTrigger && triggerCategory) stamp.trigger = { category: triggerCategory, label: triggerLabel };
+        updates.note = JSON.stringify([...existing, { text: cleanNote, timestamp: nowIso, ...stamp }]);
       }
 
       if (localEmotions.length > 0) {
