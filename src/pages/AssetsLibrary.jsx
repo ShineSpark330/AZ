@@ -7,8 +7,11 @@ import { toast } from "sonner";
 import {
   Images, Upload, Loader2, Trash2, Pencil, FolderInput, FolderPlus, Search, SlidersHorizontal,
   ChevronRight, ArrowUp, ArrowDown, X, UserPlus2, Users, ArrowLeft, CheckSquare, Check, Folder,
-  Download, Film, Music, File as FileIcon, Cloud, CloudOff,
+  Download, Film, Music, File as FileIcon, Cloud, CloudOff, Info,
 } from "lucide-react";
+import ImageViewer from "@/components/shared/ImageViewer";
+import MediaViewerDialog from "@/components/shared/MediaViewerDialog";
+import AssetInfoDialog from "@/components/shared/AssetInfoDialog";
 import AlterSearchSelect from "@/components/shared/AlterSearchSelect";
 import SearchableSelect from "@/components/shared/SearchableSelect";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -40,7 +43,9 @@ const PAGE = 24; // lazy-load page size per folder
 // Videos, audio and any other file attached in chat (or uploaded here). It is the
 // SAME store the chat reads, so a file attached in chat shows up here and a file
 // deleted here disappears from chat.
-const FILES_FOLDER = "Files & videos";
+const FILES_FOLDER = "Files";
+// Videos get a folder of their own — never mixed in with other attached files.
+const VIDEOS_FOLDER = "Videos";
 
 const loadArr = (k) => { try { return JSON.parse(localStorage.getItem(k) || "[]"); } catch { return []; } };
 const saveArr = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* off */ } };
@@ -81,6 +86,10 @@ function Thumb({ item, onSaveToLibrary, onRename, onMove, onDelete, onSaveDevice
   // moved or deleted from here — in select mode they're dimmed, not pickable.
   const pickable = !item.refOnly;
   const isMediaTile = item.isMedia || item.kind === "audio" || item.kind === "video";
+  // Tap a tile to look at it: pictures open the zoom viewer, audio / video open a
+  // player with tempo & pitch. (Other attached files have nothing to open.)
+  const [openPanel, setOpenPanel] = useState(null); // "view" | "play" | "info" | null
+  const canOpen = isMediaTile ? (item.kind === "audio" || item.kind === "video") : !!resolved;
   const image = (
     <div className={`relative w-full aspect-square rounded-lg overflow-hidden border bg-muted/30 ${
       selected ? "border-primary ring-2 ring-primary" : "border-border/50"} ${selecting && !pickable ? "opacity-40" : ""}`}>
@@ -106,6 +115,11 @@ function Thumb({ item, onSaveToLibrary, onRename, onMove, onDelete, onSaveDevice
           aria-label={`${selected ? "Deselect" : "Select"} ${item.name}`} className="block w-full text-left">
           {image}
         </button>
+      ) : canOpen ? (
+        <button type="button" onClick={() => setOpenPanel(isMediaTile ? "play" : "view")}
+          aria-label={`${isMediaTile ? "Play" : "View"} ${item.name}`} className="block w-full text-left">
+          {image}
+        </button>
       ) : image}
       <p className="text-[0.625rem] text-muted-foreground truncate mt-0.5 px-0.5">{item.name}</p>
       {showFolder && <p className="text-[0.5625rem] text-muted-foreground/70 truncate px-0.5">{item.folder}</p>}
@@ -113,6 +127,7 @@ function Thumb({ item, onSaveToLibrary, onRename, onMove, onDelete, onSaveDevice
         // Icon-only actions (labels are tooltips / screen-reader text) so they
         // never wrap or overlap, whatever font is in use.
         <div className="mt-1 flex flex-wrap items-center justify-center gap-0.5">
+          <button type="button" onClick={() => setOpenPanel("info")} title="Info" aria-label={`Details for ${item.name}`} className={`${ICON_BTN} hover:text-foreground`}><Info className="w-3.5 h-3.5" /></button>
           {!item.refOnly && (
             <button type="button" onClick={() => onRename(item)} title="Rename" aria-label={`Rename ${item.name}`} className={`${ICON_BTN} hover:text-foreground`}><Pencil className="w-3.5 h-3.5" /></button>
           )}
@@ -139,6 +154,9 @@ function Thumb({ item, onSaveToLibrary, onRename, onMove, onDelete, onSaveDevice
           )}
         </div>
       )}
+      {openPanel === "view" && <ImageViewer open src={item.url} name={item.name} isGif={item.isGif} onClose={() => setOpenPanel(null)} />}
+      {openPanel === "play" && <MediaViewerDialog item={item} onClose={() => setOpenPanel(null)} />}
+      {openPanel === "info" && <AssetInfoDialog item={item} backupSkipped={backupSkipped} onClose={() => setOpenPanel(null)} />}
     </div>
   );
 }
@@ -152,9 +170,11 @@ function FolderTile({ name, items, onOpen }) {
       <div className="w-full aspect-square rounded-xl overflow-hidden border border-border/50 bg-muted/30 flex items-center justify-center group-hover:border-primary/50 transition-colors">
         {resolved
           ? <img src={resolved} alt="" className="w-full h-full object-cover" loading="lazy" />
-          : name === FILES_FOLDER
+          : name === VIDEOS_FOLDER
             ? <Film className="w-8 h-8 text-muted-foreground/60" />
-            : <Folder className="w-8 h-8 text-muted-foreground/60" />}
+            : name === FILES_FOLDER
+              ? <FileIcon className="w-8 h-8 text-muted-foreground/60" />
+              : <Folder className="w-8 h-8 text-muted-foreground/60" />}
       </div>
       <p className="text-xs font-medium truncate mt-1 px-0.5">{name}</p>
       <p className="text-[0.625rem] text-muted-foreground px-0.5">{items.length} item{items.length === 1 ? "" : "s"}</p>
@@ -273,7 +293,7 @@ export default function AssetsLibrary() {
       toast.success(skip ? `${keys.length} left out of backups` : `${keys.length} included in backups again`);
     } catch (e) { toast.error(e?.message || "Couldn't change that"); }
   };
-  const AUTO_FOLDERS = useMemo(() => new Set([...autoFolderNames(rules), BUILT_IN_FOLDER, FILES_FOLDER]), [rules]);
+  const AUTO_FOLDERS = useMemo(() => new Set([...autoFolderNames(rules), BUILT_IN_FOLDER, FILES_FOLDER, VIDEOS_FOLDER]), [rules]);
   const autoFolderFor = (id) => autoFolderForRules(id, rules);
   const alterFolderName = (alterId, role) => alterFolderNameRules(alterNameById[alterId] || "Unknown alter", role, rules);
   const [orgOpen, setOrgOpen] = useState(false);
@@ -345,13 +365,14 @@ export default function AssetsLibrary() {
     for (const id of Object.keys(rawImages)) {
       const asset = assetByImageId[id];
       const data = rawImages[id];
+      const isVideoData = typeof data === "string" && data.startsWith("data:video/");
       out.push({
         key: id, id,
         url: `/local-image/${encodeURIComponent(id)}`,
         asset: asset || null,
         name: asset?.name || usage[id]?.name || id,
         folder: asset?.owner_alter_id && rules.perAlter ? alterFolderName(asset.owner_alter_id, asset.owner_role)
-          : ((asset?.folder || "").trim() || usage[id]?.folder || autoFolderFor(id)),
+          : ((asset?.folder || "").trim() || usage[id]?.folder || (isVideoData ? VIDEOS_FOLDER : autoFolderFor(id))),
         ...(usage[id]?.ownerAlterId && !asset ? { ownerAlterId: usage[id].ownerAlterId, role: usage[id].role } : {}),
         isGif: !!asset?.is_gif || (typeof data === "string" && data.startsWith("data:image/gif")),
         // Songs are kept in this store too — show them as audio, not a broken picture.
@@ -365,7 +386,7 @@ export default function AssetsLibrary() {
       out.push({
         key: `media-${m.id}`, id: m.id, mediaId: m.id, isMedia: true,
         kind: m.kind, mime: m.mime, size: m.size,
-        url: "", asset: null, name: m.name, folder: FILES_FOLDER, isGif: false,
+        url: "", asset: null, name: m.name, folder: m.kind === "video" ? VIDEOS_FOLDER : FILES_FOLDER, isGif: false,
       });
     }
     for (const a of assets) {
@@ -406,10 +427,13 @@ export default function AssetsLibrary() {
     const autoNames = Object.keys(map)
       .filter((f) => AUTO_FOLDERS.has(f))
       .sort((a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b)));
-    // Always show the Files & videos folder (even empty) so it's clear where chat attachments go.
-    const ffi = autoNames.indexOf(FILES_FOLDER);
-    if (ffi > -1) autoNames.splice(ffi, 1);
-    autoNames.unshift(FILES_FOLDER);
+    // Always show the Videos and Files folders (even empty) so it's clear where
+    // chat attachments go — videos in their own folder, other files in Files.
+    for (const nm of [FILES_FOLDER, VIDEOS_FOLDER]) {
+      const fi = autoNames.indexOf(nm);
+      if (fi > -1) autoNames.splice(fi, 1);
+    }
+    autoNames.unshift(VIDEOS_FOLDER, FILES_FOLDER);
 
     let ordered = [...userNames, ...alterFolderNames, ...autoNames];
     // Owner-filter narrows to just folders whose AssetFolder record lists
@@ -502,11 +526,14 @@ export default function AssetsLibrary() {
     setUploading(true);
     let added = 0;
     let addedFiles = 0;
+    let addedVideos = 0;
     for (const file of files) {
       // Pictures go to the picture library; videos, audio and any other file are
-      // stored untouched in Files & videos (original quality, no compression).
-      if (classifyMedia(file.type, file.name) !== "image") {
-        try { await saveMedia(file); addedFiles++; } catch { /* skip */ }
+      // stored untouched (original quality, no compression) — videos in Videos,
+      // everything else in Files.
+      const fileKind = classifyMedia(file.type, file.name);
+      if (fileKind !== "image") {
+        try { await saveMedia(file); if (fileKind === "video") addedVideos++; else addedFiles++; } catch { /* skip */ }
         continue;
       }
       try {
@@ -529,6 +556,7 @@ export default function AssetsLibrary() {
     setUploading(false);
     const bits = [];
     if (added) bits.push(`${added} image${added === 1 ? "" : "s"}`);
+    if (addedVideos) bits.push(`${addedVideos} video${addedVideos === 1 ? "" : "s"} (in ${VIDEOS_FOLDER})`);
     if (addedFiles) bits.push(`${addedFiles} file${addedFiles === 1 ? "" : "s"} (in ${FILES_FOLDER})`);
     if (bits.length) toast.success(`${bits.join(" and ")} uploaded`);
   };
@@ -632,7 +660,7 @@ export default function AssetsLibrary() {
     let moved = 0, skipped = 0;
     for (const item of selectedItems) {
       try {
-        if (item.isMedia) { skipped++; continue; } // Files & videos is its own linked folder
+        if (item.isMedia) { skipped++; continue; } // Videos and Files are their own linked folders
         if (item.asset?.owner_alter_id && rules.perAlter) { skipped++; continue; } // filed under its alter
         if (item.asset) await base44.entities.ImageAsset.update(item.asset.id, { folder });
         else await base44.entities.ImageAsset.create({ name: item.name && item.name !== item.id ? item.name : "Image", image_url: item.url, folder, is_gif: item.isGif, created_date: new Date().toISOString() });

@@ -1,22 +1,21 @@
 import React, { useEffect, useRef, useState } from "react";
 import { File as FileIcon, Film, Music, Loader2 } from "lucide-react";
 import { getMedia, playableBlob, formatBytes } from "@/lib/mediaStore";
+import { useMediaTuning } from "@/lib/mediaTuning";
+import MediaTuningPanel from "@/components/shared/MediaTuningPanel";
 
 // An attached file inside a message / bulletin / comment: a video or audio
-// player with a playback-speed picker, or a file card. Always the ORIGINAL
-// bytes — nothing is re-encoded. Rendered from the inert
+// player (its own controls handle play/seek/speed) with a tempo & pitch panel,
+// or a file card. Always the ORIGINAL bytes — nothing is re-encoded; tempo and
+// pitch only change how it is played right now. Rendered from the inert
 // <div data-media-id="…"> placeholder (see renderBulletinContent.jsx).
-
-export const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
-
-const rateLabel = (r) => `${r}×`;
 
 export default function MediaAttachment({ id, kind: kindHint, name: nameHint, size: sizeHint }) {
   // undefined = loading, null = not on this device
   const [rec, setRec] = useState(undefined);
   const [url, setUrl] = useState(null);
-  const [rate, setRate] = useState(1);
   const mediaRef = useRef(null);
+  const tuning = useMediaTuning(mediaRef, id);
 
   useEffect(() => {
     let alive = true;
@@ -40,12 +39,6 @@ export default function MediaAttachment({ id, kind: kindHint, name: nameHint, si
     })();
     return () => { alive = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [id]);
-
-  // Keep the chosen speed applied — the element resets it when the source loads.
-  useEffect(() => {
-    const el = mediaRef.current;
-    if (el) el.playbackRate = rate;
-  }, [rate, url]);
 
   const kind = rec?.kind || kindHint || "file";
   const name = rec?.name || nameHint || "file";
@@ -80,11 +73,7 @@ export default function MediaAttachment({ id, kind: kindHint, name: nameHint, si
             playsInline
             preload="metadata"
             className="w-full max-h-[60vh] rounded-lg bg-black"
-            onLoadedMetadata={(e) => { e.currentTarget.playbackRate = rate; }}
-            onRateChange={(e) => {
-              const r = Math.round(e.currentTarget.playbackRate * 100) / 100;
-              if (r !== rate) setRate(r);
-            }}
+            onRateChange={tuning.onNativeRateChange}
           />
         ) : (
           <audio
@@ -93,28 +82,11 @@ export default function MediaAttachment({ id, kind: kindHint, name: nameHint, si
             controls
             preload="metadata"
             className="w-full"
-            onLoadedMetadata={(e) => { e.currentTarget.playbackRate = rate; }}
-            onRateChange={(e) => {
-              const r = Math.round(e.currentTarget.playbackRate * 100) / 100;
-              if (r !== rate) setRate(r);
-            }}
+            onRateChange={tuning.onNativeRateChange}
           />
         )}
 
-        <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Playback speed">
-          <span className="text-[0.6875rem] text-muted-foreground mr-0.5">Speed</span>
-          {PLAYBACK_RATES.map((r) => (
-            <button
-              key={r}
-              type="button"
-              aria-pressed={rate === r}
-              onClick={() => setRate(r)}
-              className={`px-1.5 py-0.5 rounded text-[0.6875rem] tabular-nums border transition-colors ${rate === r ? "border-primary bg-primary/10 text-primary font-medium" : "border-border/50 text-muted-foreground hover:text-foreground"}`}
-            >
-              {rateLabel(r)}
-            </button>
-          ))}
-        </div>
+        <MediaTuningPanel tuning={tuning} />
 
         <p className="text-[0.6875rem] text-muted-foreground min-w-0 truncate">{name} · {formatBytes(size)}</p>
       </div>

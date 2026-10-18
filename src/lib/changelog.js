@@ -18,8 +18,20 @@
 
 export const CHANGELOG = [
   {
-    date: "October 17, 2026",
+    date: "October 18, 2026",
     changes: [
+      { type: "feature", text: "Pictures in chat, bulletins and Assets now open full screen — pinch, double-tap or scroll to zoom and drag to look around. Pick Original, Medium or Low quality to ease the load on a slower device (your saved picture is never changed)." },
+      { type: "feature", text: "Audio and video: new Tempo & pitch controls change speed and pitch separately, with a Link button to move them together and a Reset. Tap an audio or video tile in Assets to play it." },
+      { type: "improve", text: "Audio and video players no longer show their own row of speed buttons — the player's built-in speed menu already does that." },
+      { type: "feature", text: "Assets: every item now has an info button listing its details — type, size, dimensions or length, folder, where it's stored and whether it's backed up." },
+    ],
+  },
+  {
+    date: "October 17, 2026",
+    version: "0.256.9",
+    changes: [
+      { type: "improve", text: "Assets: videos now have their own Videos folder, and other attached files stay in Files — they're no longer merged into one folder. Uploading says which folder each kind went to." },
+      { type: "improve", text: "Export (Advanced): Videos now have their own tick box under File types in this backup, separate from Other files." },
       { type: "fix", text: "The version shown in the app now matches the installed build (it was stuck on an older number)." },
       { type: "improve", text: "Check-In Log: Note, Display and Analytics are now round icon-only buttons, so all three fit on the row." },
       { type: "fix", text: "{{Alter}} picker: the sort button inside the search box is now a neat round button that sits centred in the box instead of sticking out." },

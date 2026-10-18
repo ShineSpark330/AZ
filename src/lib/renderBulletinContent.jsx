@@ -2,6 +2,7 @@ import React from "react";
 import { Link } from "react-router-dom";
 import { effectiveAlias } from "@/lib/alterLabel";
 import MediaAttachment from "@/components/shared/MediaAttachment";
+import { ZoomableImage } from "@/components/shared/ImageViewer";
 
 // Tags allowed in bulletin/comment content. The base set keeps simple
 // posts minimal; the rich set (used when a post was written in the
@@ -194,11 +195,12 @@ function nodeToReact(node, key, renderText) {
     if (!safe) return null;
     const styleObj = cssStringToStyleObject(node.getAttribute("style")) || {};
     return (
-      <img
+      // Tap to zoom (and pick a viewing quality). Rendered content only —
+      // the editors never go through here, so editing stays untouched.
+      <ZoomableImage
         key={key}
         src={src}
         alt={node.getAttribute("alt") || ""}
-        loading="lazy"
         style={{ maxWidth: "100%", height: "auto", borderRadius: 8, display: "block", margin: "6px 0", ...styleObj }}
       />
     );

@@ -156,19 +156,20 @@ const ENTITY_NAMES = [
 ];
 
 // The normal backup file carries what's in the picture store — pictures, audio
-// and the odd other file. These three switches choose which of them ride in it
-// ("other" = video + any other type). Videos and attachments kept in the files
-// store travel in the .zip exports instead.
+// and the odd video / other file. These switches choose which of them ride in
+// it — videos have their own switch, never merged with other files. Videos and
+// attachments kept in the files store travel in the .zip exports instead.
 export const JSON_FILE_KIND_CHOICES = [
   { id: "image", label: "Pictures" },
   { id: "audio", label: "Audio" },
+  { id: "video", label: "Videos" },
   { id: "other", label: "Other files" },
 ];
 function jsonKindOfDataUrl(v) {
   if (typeof v !== "string" || !v.startsWith("data:")) return "other";
   const mime = v.slice(5, v.indexOf(";") === -1 ? 40 : v.indexOf(";"));
   const k = classifyMedia(mime, "");
-  return k === "image" ? "image" : k === "audio" ? "audio" : "other";
+  return k === "image" ? "image" : k === "audio" ? "audio" : k === "video" ? "video" : "other";
 }
 function filterImagesByKinds(imagesMap, kinds) {
   if (!kinds || kinds.size >= JSON_FILE_KIND_CHOICES.length) return imagesMap;
