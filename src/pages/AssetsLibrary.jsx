@@ -43,7 +43,12 @@ const PAGE = 24; // lazy-load page size per folder
 // Videos, audio and any other file attached in chat (or uploaded here). It is the
 // SAME store the chat reads, so a file attached in chat shows up here and a file
 // deleted here disappears from chat.
-const FILES_FOLDER = "Files";
+const AUDIO_FOLDER = "Audio";
+// Any other attached file (documents, archives…) — neither audio nor video.
+const OTHERS_FOLDER = "Others";
+// Songs uploaded through a song widget / profile song live in the picture store.
+const SONGS_AUDIO_FOLDER = "Songs Audio";
+const mediaFolderFor = (kind) => (kind === "video" ? VIDEOS_FOLDER : kind === "audio" ? AUDIO_FOLDER : OTHERS_FOLDER);
 // Videos get a folder of their own — never mixed in with other attached files.
 const VIDEOS_FOLDER = "Videos";
 
@@ -163,7 +168,8 @@ function Thumb({ item, onSaveToLibrary, onRename, onMove, onDelete, onSaveDevice
 
 // A folder in the folder grid: its first image as the cover, name, count.
 function FolderTile({ name, items, onOpen }) {
-  const cover = items.find((i) => i.url)?.url || "";
+  // Audio and video items have no picture to show (an <img> of a song is a broken icon).
+  const cover = items.find((i) => i.url && i.kind !== "audio" && i.kind !== "video" && !i.isMedia && !String(i.id).startsWith("song-"))?.url || "";
   const resolved = useResolvedAvatarUrl(cover);
   return (
     <button type="button" onClick={onOpen} className="text-left group">
@@ -172,7 +178,9 @@ function FolderTile({ name, items, onOpen }) {
           ? <img src={resolved} alt="" className="w-full h-full object-cover" loading="lazy" />
           : name === VIDEOS_FOLDER
             ? <Film className="w-8 h-8 text-muted-foreground/60" />
-            : name === FILES_FOLDER
+            : name === AUDIO_FOLDER || name === SONGS_AUDIO_FOLDER
+              ? <Music className="w-8 h-8 text-muted-foreground/60" />
+              : name === OTHERS_FOLDER
               ? <FileIcon className="w-8 h-8 text-muted-foreground/60" />
               : <Folder className="w-8 h-8 text-muted-foreground/60" />}
       </div>
@@ -293,7 +301,7 @@ export default function AssetsLibrary() {
       toast.success(skip ? `${keys.length} left out of backups` : `${keys.length} included in backups again`);
     } catch (e) { toast.error(e?.message || "Couldn't change that"); }
   };
-  const AUTO_FOLDERS = useMemo(() => new Set([...autoFolderNames(rules), BUILT_IN_FOLDER, FILES_FOLDER, VIDEOS_FOLDER]), [rules]);
+  const AUTO_FOLDERS = useMemo(() => new Set([...autoFolderNames(rules), BUILT_IN_FOLDER, AUDIO_FOLDER, OTHERS_FOLDER, SONGS_AUDIO_FOLDER, VIDEOS_FOLDER]), [rules]);
   const autoFolderFor = (id) => autoFolderForRules(id, rules);
   const alterFolderName = (alterId, role) => alterFolderNameRules(alterNameById[alterId] || "Unknown alter", role, rules);
   const [orgOpen, setOrgOpen] = useState(false);
@@ -366,13 +374,16 @@ export default function AssetsLibrary() {
       const asset = assetByImageId[id];
       const data = rawImages[id];
       const isVideoData = typeof data === "string" && data.startsWith("data:video/");
+      // Songs saved before the "Songs Audio" folder existed carry the folder
+      // name "Audio", which now belongs to audio attached in chat.
+      const isSongData = (typeof data === "string" && data.startsWith("data:audio/")) || asset?.kind === "audio" || String(id).startsWith("song-");
       out.push({
         key: id, id,
         url: `/local-image/${encodeURIComponent(id)}`,
         asset: asset || null,
         name: asset?.name || usage[id]?.name || id,
         folder: asset?.owner_alter_id && rules.perAlter ? alterFolderName(asset.owner_alter_id, asset.owner_role)
-          : ((asset?.folder || "").trim() || usage[id]?.folder || (isVideoData ? VIDEOS_FOLDER : autoFolderFor(id))),
+          : (((asset?.folder || "").trim() === AUDIO_FOLDER && isSongData ? SONGS_AUDIO_FOLDER : (asset?.folder || "").trim()) || usage[id]?.folder || (isVideoData ? VIDEOS_FOLDER : autoFolderFor(id))),
         ...(usage[id]?.ownerAlterId && !asset ? { ownerAlterId: usage[id].ownerAlterId, role: usage[id].role } : {}),
         isGif: !!asset?.is_gif || (typeof data === "string" && data.startsWith("data:image/gif")),
         // Songs are kept in this store too — show them as audio, not a broken picture.
@@ -386,7 +397,7 @@ export default function AssetsLibrary() {
       out.push({
         key: `media-${m.id}`, id: m.id, mediaId: m.id, isMedia: true,
         kind: m.kind, mime: m.mime, size: m.size,
-        url: "", asset: null, name: m.name, folder: m.kind === "video" ? VIDEOS_FOLDER : FILES_FOLDER, isGif: false,
+        url: "", asset: null, name: m.name, folder: mediaFolderFor(m.kind), isGif: false,
       });
     }
     for (const a of assets) {
@@ -427,13 +438,13 @@ export default function AssetsLibrary() {
     const autoNames = Object.keys(map)
       .filter((f) => AUTO_FOLDERS.has(f))
       .sort((a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b)));
-    // Always show the Videos and Files folders (even empty) so it's clear where
-    // chat attachments go — videos in their own folder, other files in Files.
-    for (const nm of [FILES_FOLDER, VIDEOS_FOLDER]) {
+    // Always show Videos, Audio and Others (even empty) so it's clear where chat
+    // attachments go — each kind in its own folder.
+    for (const nm of [AUDIO_FOLDER, OTHERS_FOLDER, VIDEOS_FOLDER]) {
       const fi = autoNames.indexOf(nm);
       if (fi > -1) autoNames.splice(fi, 1);
     }
-    autoNames.unshift(VIDEOS_FOLDER, FILES_FOLDER);
+    autoNames.unshift(VIDEOS_FOLDER, AUDIO_FOLDER, OTHERS_FOLDER);
 
     let ordered = [...userNames, ...alterFolderNames, ...autoNames];
     // Owner-filter narrows to just folders whose AssetFolder record lists
@@ -526,14 +537,15 @@ export default function AssetsLibrary() {
     setUploading(true);
     let added = 0;
     let addedFiles = 0;
+    let addedAudio = 0;
     let addedVideos = 0;
     for (const file of files) {
       // Pictures go to the picture library; videos, audio and any other file are
       // stored untouched (original quality, no compression) — videos in Videos,
-      // everything else in Files.
+      // everything else in Others.
       const fileKind = classifyMedia(file.type, file.name);
       if (fileKind !== "image") {
-        try { await saveMedia(file); if (fileKind === "video") addedVideos++; else addedFiles++; } catch { /* skip */ }
+        try { await saveMedia(file); if (fileKind === "video") addedVideos++; else if (fileKind === "audio") addedAudio++; else addedFiles++; } catch { /* skip */ }
         continue;
       }
       try {
@@ -557,7 +569,8 @@ export default function AssetsLibrary() {
     const bits = [];
     if (added) bits.push(`${added} image${added === 1 ? "" : "s"}`);
     if (addedVideos) bits.push(`${addedVideos} video${addedVideos === 1 ? "" : "s"} (in ${VIDEOS_FOLDER})`);
-    if (addedFiles) bits.push(`${addedFiles} file${addedFiles === 1 ? "" : "s"} (in ${FILES_FOLDER})`);
+    if (addedAudio) bits.push(`${addedAudio} audio file${addedAudio === 1 ? "" : "s"} (in ${AUDIO_FOLDER})`);
+    if (addedFiles) bits.push(`${addedFiles} file${addedFiles === 1 ? "" : "s"} (in ${OTHERS_FOLDER})`);
     if (bits.length) toast.success(`${bits.join(" and ")} uploaded`);
   };
 

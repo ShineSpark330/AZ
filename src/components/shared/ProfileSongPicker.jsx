@@ -113,7 +113,9 @@ export default function ProfileSongPicker({ value, onChange, subjectLabel = "pag
         await base44.entities.ImageAsset.create({
           name: file.name.replace(/\.[^.]+$/, "").slice(0, 60) || "Audio",
           image_url: createLocalImageUrl(audioId),
-          folder: "Audio",
+          // Full original file name kept for exports (the title above is shortened).
+          original_name: file.name,
+          folder: "Songs Audio",
           kind: "audio",
           created_date: new Date().toISOString(),
         });

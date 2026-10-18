@@ -889,7 +889,7 @@ export default function DataBackupRestore({ section = "all", onExternalFile, exp
             ? `Backup saved to ${res.location} 📁`
             : "Backup exported!";
         const imgNote = (overrideCats ?? selectedCats).has("images") && !skipHeavyBlobs
-          ? ` Includes ${imgCount} image${imgCount === 1 ? "" : "s"}.`
+          ? ` Includes ${imgCount} file${imgCount === 1 ? "" : "s"}.`
           : "";
         showStatus("success", `${base}${imgNote}`);
         // Mark today as "backup exported" so a daily task wired to the
@@ -920,7 +920,7 @@ export default function DataBackupRestore({ section = "all", onExternalFile, exp
 
   // EVERY stored file as a plain .zip — pictures, audio, videos and attached
   // files — with their real names and real file types (a song is "Name.mp3",
-  // never ".img"), sorted into Pictures / Audio / Videos / Files folders. Usable
+  // never ".img"), sorted into Pictures / Songs Audio / Audio / Videos / Others folders. Usable
   // OUTSIDE the app as well as a backup, and the zip restores back into the app
   // (Settings → Export → Large media backups → Restore). A very large library
   // is written as ONE zip (no splitting).

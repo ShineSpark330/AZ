@@ -163,7 +163,8 @@ export async function computeFileKindStats() {
 
 // ── Everything → .zip parts ──────────────────────────────────────────────────
 
-const FOLDER_FOR_KIND = { image: "Pictures", audio: "Audio", video: "Videos", file: "Files" };
+const FOLDER_FOR_KIND = { image: "Pictures", audio: "Audio", video: "Videos", file: "Others" };
+const SONGS_AUDIO_FOLDER = "Songs Audio";
 const zipFileName = nameWithRealExt;
 
 // id → the name a person gave it in the Assets library (e.g. a song's title).
@@ -173,7 +174,7 @@ async function libraryNames() {
     const assets = await base44.entities.ImageAsset.list();
     for (const a of assets || []) {
       const id = a.image_url ? getLocalImageId(a.image_url) : null;
-      if (id && a.name && a.name !== "Image") map.set(id, a.name);
+      if (id && a.name && a.name !== "Image") map.set(id, a.original_name || a.name);
     }
   } catch { /* names are a nicety; ids are used if the library can't be read */ }
   return map;
@@ -236,7 +237,8 @@ export async function exportAllFilesZipParts({ maxBytes = DEFAULT_PART_SIZE_MB *
           const head = new Uint8Array(await b.slice(0, 16).arrayBuffer());
           const mime = b.type || "";
           const kind = classifyMedia(mime || (sniffExt(head) ? `x/${sniffExt(head)}` : ""), `x.${sniffExt(head) || extForMime(mime)}`);
-          const path = uniquePath(FOLDER_FOR_KIND[kind] || "Files", zipFileName({ name: names.get(id) || id, id, mime, head }), id);
+          // Songs kept in the picture store get their own folder, apart from audio attached in chat.
+          const path = uniquePath(kind === "audio" ? SONGS_AUDIO_FOLDER : (FOLDER_FOR_KIND[kind] || "Others"), zipFileName({ name: names.get(id) || id, id, mime, head }), id);
           manifest.images.push({ id, file: path, mime: mime || "application/octet-stream" });
           entries.push({ name: path, bytes: () => blobBytes(b) });
         } else {
@@ -246,7 +248,7 @@ export async function exportAllFilesZipParts({ maxBytes = DEFAULT_PART_SIZE_MB *
           const blob = playableBlob(rec);
           if (!blob) continue;
           const head = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
-          const path = uniquePath(FOLDER_FOR_KIND[meta.kind] || "Files", zipFileName({ name: meta.name, id, mime: meta.mime, head }), id);
+          const path = uniquePath(FOLDER_FOR_KIND[meta.kind] || "Others", zipFileName({ name: meta.name, id, mime: meta.mime, head }), id);
           manifest.files.push({ id, name: meta.name, mime: meta.mime, size: meta.size, createdAt: meta.createdAt, path });
           entries.push({ name: path, bytes: () => blobBytes(blob) });
         }

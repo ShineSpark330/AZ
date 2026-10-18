@@ -126,7 +126,7 @@ export default function AttachFileDialog({ file, onConfirm, onCancel }) {
   if (!file) return null;
 
   const chosen = options.find((o) => o.id === choice);
-  const folder = MEDIA_FOLDER_FOR_KIND[kind] || "Files";
+  const folder = MEDIA_FOLDER_FOR_KIND[kind] || "Others";
 
   const confirm = () => {
     try { localStorage.setItem(SAVE_COPY_KEY, saveCopy ? "1" : "0"); } catch { /* noop */ }

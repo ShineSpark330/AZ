@@ -141,7 +141,7 @@ export function guessMime(mime, name) {
 }
 
 // Folder name under Downloads/Oceans Symphony/files/ for each kind.
-export const MEDIA_FOLDER_FOR_KIND = { image: "Images", video: "Videos", audio: "Audio", file: "Files" };
+export const MEDIA_FOLDER_FOR_KIND = { image: "Images", video: "Videos", audio: "Audio", file: "Others" };
 
 export function formatBytes(n) {
   const b = Number(n) || 0;

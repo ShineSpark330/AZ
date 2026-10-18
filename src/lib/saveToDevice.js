@@ -1,7 +1,7 @@
 // "Save a copy to my device" for attached files.
 //
 // Android: written silently into  Downloads/Oceans Symphony/files/<Type>/
-// (Images, Videos, Audio or Files) through the MediaStore plugin — survives an
+// (Images, Videos, Audio or Others) through the MediaStore plugin — survives an
 // uninstall and needs no permission prompt. That plugin passes the whole file
 // across the native bridge as base64, so past NATIVE_DIRECT_LIMIT_BYTES we hand
 // the file to the system share sheet instead (the person picks where it goes)
@@ -15,7 +15,7 @@ export const NATIVE_DIRECT_LIMIT_BYTES = 40 * 1024 * 1024;
 export const FILES_ROOT_SUBDIR = "Oceans Symphony/files";
 
 export function deviceFolderFor(kind) {
-  return `${FILES_ROOT_SUBDIR}/${MEDIA_FOLDER_FOR_KIND[kind] || "Files"}`;
+  return `${FILES_ROOT_SUBDIR}/${MEDIA_FOLDER_FOR_KIND[kind] || "Others"}`;
 }
 
 // Returns { ok, cancelled?, location?, via?, error? }

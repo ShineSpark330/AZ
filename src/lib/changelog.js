@@ -20,7 +20,13 @@ export const CHANGELOG = [
   {
     date: "October 18, 2026",
     changes: [
-      { type: "improve", text: "Song widget: the song name is replaced by a seek slider with current and total time, and the widget now goes by \"Songs/Background Music\" by default." },
+      { type: "improve", text: "Assets: chat audio now lives in an Audio folder, other files in a new Others folder, and song-widget songs in Songs Audio. Backup zips and \"Save to device\" use the same folder names." },
+      { type: "fix", text: "Songs Audio folder no longer shows a broken picture icon." },
+      { type: "fix", text: "Songs keep their full original file name in backups." },
+      { type: "hotfix", text: "Backup message now says \"files\" instead of \"images\"." },
+      { type: "fix", text: "Tempo & pitch: unlinked pitch sounds much less robotic, and Link now keeps the gap you set instead of snapping pitch to tempo." },
+      { type: "improve", text: "Song widget heading now reads \"Song: [song title]\"." },
+      { type: "improve", text: "Song widget: the song name is replaced by a seek slider with current and total time, and the widget heading is shorter." },
       { type: "fix", text: "Full-screen video no longer sits under the phone's Back / Home / Recents buttons." },
       { type: "fix", text: "Audio and video players now have a seek bar you can tap or drag to jump to any time." },
       { type: "fix", text: "Dragging the Tempo & pitch sliders no longer swipes the home screen to another widget page." },
