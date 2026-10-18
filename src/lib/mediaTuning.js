@@ -178,6 +178,10 @@ export function useMediaTuning(mediaRef, resetKey) {
   const [semitones, setSemitonesState] = useState(0);
   const [linked, setLinkedState] = useState(false);
   const [pitchSupported, setPitchSupported] = useState(true);
+  // Bumped by the player when it rebuilds its element (e.g. entering full screen)
+  // so tempo / pitch are re-applied to the new one.
+  const [elTick, setElTick] = useState(0);
+  const rebind = useCallback(() => setElTick((n) => n + 1), []);
   const engineRef = useRef(null);
   const stateRef = useRef({ tempo: 1, semitones: 0, linked: false });
   stateRef.current = { tempo, semitones, linked };
@@ -213,7 +217,7 @@ export function useMediaTuning(mediaRef, resetKey) {
     // The element resets its rate when a new source loads.
     el.addEventListener("loadedmetadata", apply);
     return () => el.removeEventListener("loadedmetadata", apply);
-  }, [mediaRef, tempo, semitones, linked]);
+  }, [mediaRef, tempo, semitones, linked, elTick]);
 
   // Tear the audio graph down with the player.
   useEffect(() => () => { engineRef.current?.close(); engineRef.current = null; }, []);
@@ -254,7 +258,7 @@ export function useMediaTuning(mediaRef, resetKey) {
 
   return {
     tempo, semitones, linked, pitchSupported,
-    setTempo, setSemitones, setLinked, reset, onNativeRateChange,
+    setTempo, setSemitones, setLinked, reset, onNativeRateChange, rebind,
     isDefault: Math.abs(tempo - 1) < 0.001 && Math.abs(semitones) < 0.001,
   };
 }

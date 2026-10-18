@@ -20,6 +20,13 @@ export const CHANGELOG = [
   {
     date: "October 18, 2026",
     changes: [
+      { type: "improve", text: "Song widget: the song name is replaced by a seek slider with current and total time, and the widget now goes by \"Songs/Background Music\" by default." },
+      { type: "fix", text: "Full-screen video no longer sits under the phone's Back / Home / Recents buttons." },
+      { type: "fix", text: "Audio and video players now have a seek bar you can tap or drag to jump to any time." },
+      { type: "fix", text: "Dragging the Tempo & pitch sliders no longer swipes the home screen to another widget page." },
+      { type: "improve", text: "Only one audio or video plays at a time — starting one pauses the others." },
+      { type: "feature", text: "Loop button on audio and video players, and on the song widget." },
+      { type: "feature", text: "Song widget: new \"Play when there's no sound playing\" option, and a seek bar to jump to a time." },
       { type: "feature", text: "Pictures in chat, bulletins and Assets now open full screen — pinch, double-tap or scroll to zoom and drag to look around. Pick Original, Medium or Low quality to ease the load on a slower device (your saved picture is never changed)." },
       { type: "feature", text: "Audio and video: new Tempo & pitch controls change speed and pitch separately, with a Link button to move them together and a Reset. Tap an audio or video tile in Assets to play it." },
       { type: "improve", text: "Audio and video players no longer show their own row of speed buttons — the player's built-in speed menu already does that." },

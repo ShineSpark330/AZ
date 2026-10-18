@@ -1,6 +1,7 @@
-import React, { useEffect, useRef } from "react";
+import React, { useRef } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import MediaAttachment from "@/components/shared/MediaAttachment";
+import MediaPlayer from "@/components/shared/MediaPlayer";
 import MediaTuningPanel from "@/components/shared/MediaTuningPanel";
 import { useMediaTuning } from "@/lib/mediaTuning";
 import { useResolvedAvatarUrl } from "@/hooks/useResolvedAvatarUrl";
@@ -13,15 +14,10 @@ function StoredAudio({ item }) {
   const url = useResolvedAvatarUrl(item.url);
   const ref = useRef(null);
   const tuning = useMediaTuning(ref, item.key || item.id);
-  const isVideo = item.kind === "video";
-  const Tag = isVideo ? "video" : "audio";
-  useEffect(() => () => { ref.current?.pause?.(); }, []);
   if (!url) return <p className="text-xs text-muted-foreground">Loading…</p>;
   return (
     <div className="w-full rounded-xl border border-border/50 bg-muted/20 p-2 space-y-1.5">
-      <Tag ref={ref} src={url} controls playsInline preload="metadata"
-        className={isVideo ? "w-full max-h-[60vh] rounded-lg bg-black" : "w-full"}
-        onRateChange={tuning.onNativeRateChange} />
+      <MediaPlayer mediaRef={ref} src={url} kind={item.kind === "video" ? "video" : "audio"} tuning={tuning} />
       <MediaTuningPanel tuning={tuning} />
     </div>
   );

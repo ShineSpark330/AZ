@@ -202,6 +202,11 @@ export default function ProfileSongPicker({ value, onChange, subjectLabel = "pag
             <Switch checked={value.autoplay !== false}
               onCheckedChange={(v) => onChange({ ...value, autoplay: !!v })} />
           </label>
+          <label className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+            <span>Play when there's no sound playing</span>
+            <Switch checked={value.playWhenIdle === true}
+              onCheckedChange={(v) => onChange({ ...value, playWhenIdle: !!v })} />
+          </label>
           {/* Volume is saved with the SONG, so a loud track and a quiet one
               can live on two pages without re-adjusting the device each time. */}
           <div className="space-y-1">

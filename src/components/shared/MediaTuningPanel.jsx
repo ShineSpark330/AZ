@@ -25,7 +25,7 @@ export default function MediaTuningPanel({ tuning, defaultOpen = false, classNam
   } = tuning;
 
   return (
-    <div className={className} onClick={(e) => e.stopPropagation()}>
+    <div className={className} data-no-page-swipe onClick={(e) => e.stopPropagation()}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

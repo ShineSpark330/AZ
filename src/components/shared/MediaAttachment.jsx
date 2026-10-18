@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { File as FileIcon, Film, Music, Loader2 } from "lucide-react";
 import { getMedia, playableBlob, formatBytes } from "@/lib/mediaStore";
 import { useMediaTuning } from "@/lib/mediaTuning";
+import MediaPlayer from "@/components/shared/MediaPlayer";
 import MediaTuningPanel from "@/components/shared/MediaTuningPanel";
 
 // An attached file inside a message / bulletin / comment: a video or audio
@@ -65,26 +66,7 @@ export default function MediaAttachment({ id, kind: kindHint, name: nameHint, si
   if ((kind === "video" || kind === "audio") && url) {
     return (
       <div className="my-1.5 w-full max-w-md rounded-xl border border-border/50 bg-muted/20 p-2 space-y-1.5" onClick={(e) => e.stopPropagation()}>
-        {kind === "video" ? (
-          <video
-            ref={mediaRef}
-            src={url}
-            controls
-            playsInline
-            preload="metadata"
-            className="w-full max-h-[60vh] rounded-lg bg-black"
-            onRateChange={tuning.onNativeRateChange}
-          />
-        ) : (
-          <audio
-            ref={mediaRef}
-            src={url}
-            controls
-            preload="metadata"
-            className="w-full"
-            onRateChange={tuning.onNativeRateChange}
-          />
-        )}
+        <MediaPlayer mediaRef={mediaRef} src={url} kind={kind} tuning={tuning} />
 
         <MediaTuningPanel tuning={tuning} />
 
