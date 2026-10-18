@@ -20,6 +20,14 @@ export const CHANGELOG = [
   {
     date: "October 17, 2026",
     changes: [
+      { type: "fix", text: "The version shown in the app now matches the installed build (it was stuck on an older number)." },
+      { type: "improve", text: "Check-In Log: Note, Display and Analytics are now round icon-only buttons, so all three fit on the row." },
+      { type: "fix", text: "{{Alter}} picker: the sort button inside the search box is now a neat round button that sits centred in the box instead of sticking out." },
+      { type: "feature", text: "Assets library: every file now has a cloud button (and each folder has one in its header) to leave it out of backups. Skipped files show a crossed-out cloud, stay safely on this device, and are left out of manual exports, the .zip exports and automatic backups. Everything is still included by default, and files you add later are included too." },
+      { type: "feature", text: "Export: new \"Back up one type at a time\" buttons — Pictures, Audio, Videos and Attachments each save as their own .zip (with file counts and sizes), so a big video library no longer has to ride along with your pictures. Import restores them like any other file zip." },
+      { type: "improve", text: "Export (Advanced): under Local Files & Assets you can now choose which file types go into the backup file — Pictures, Audio and Other files. Unticked types stay on the device and the screen reminds you to back them up separately." },
+      { type: "fix", text: "Backup: the data-only (safe) export no longer leaves out your custom font files. Before, restoring one kept your font choice but not the font itself, so the whole app fell back to the default typeface. Fonts under about 4 MB now travel in every export." },
+      { type: "improve", text: "Check-In Log: the add-note button is now icon only (+) so the Display and Analytics buttons fit on the row." },
       { type: "fix", text: "Check-In Log: the mood dot now also shows in each day's Per-{{alter}} summary (it only appeared on the editable entries below it before), so the summary and the entries match." },
       { type: "fix", text: "Check-In Log: a triggered {{switch}} now shows a caution icon on the {{alter}}'s entries and in the Per-{{alter}} summary — it was saved but never displayed." },
       { type: "fix", text: "Check-In Log: mood dots and the caution icon now belong to the individual note they were written with. Older notes no longer pick up the emotions / trigger set later on the same session (for notes written before this, only the latest note in a session keeps them)." },

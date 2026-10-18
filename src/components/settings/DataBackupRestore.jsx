@@ -14,7 +14,9 @@ import { stripDeviceBound, stripUnsharedSecrets, buildFriendIdentityBundle, desc
 import { getLocalIdentity, mirrorIdentityToShared } from "@/lib/friendsApi";
 import { localEntities } from "@/api/base44Client";
 import { getAllLocalImages, restoreLocalImages, recompressAllStoredImages, countLocalImages, keepOriginalImages, setKeepOriginalImages, listLocalImageIds, getLocalImage, getLocalImageAsDataUrl } from "@/lib/localImageStorage";
-import { packIntoParts, partFileName } from "@/lib/mediaBackup";
+import { packIntoParts, partFileName, computeFileKindStats, FILE_KINDS, FILE_KIND_LABELS } from "@/lib/mediaBackup";
+import { loadBackupSkip, filterImagesBySkip } from "@/lib/backupSkip";
+import { classifyMedia, formatBytes } from "@/lib/mediaStore";
 import { Switch } from "@/components/ui/switch";
 import { getAllLocalFonts, restoreLocalFonts, listLocalFontIds } from "@/lib/localFontStorage";
 import {
@@ -152,6 +154,30 @@ const ENTITY_NAMES = [
   "Contact", "ContactNote", "ContactRelationship", "ContactCustomField", "ContactCategory", "ContactRelationshipType", "ContactEncounter",
   "CustomFont",
 ];
+
+// The normal backup file carries what's in the picture store — pictures, audio
+// and the odd other file. These three switches choose which of them ride in it
+// ("other" = video + any other type). Videos and attachments kept in the files
+// store travel in the .zip exports instead.
+export const JSON_FILE_KIND_CHOICES = [
+  { id: "image", label: "Pictures" },
+  { id: "audio", label: "Audio" },
+  { id: "other", label: "Other files" },
+];
+function jsonKindOfDataUrl(v) {
+  if (typeof v !== "string" || !v.startsWith("data:")) return "other";
+  const mime = v.slice(5, v.indexOf(";") === -1 ? 40 : v.indexOf(";"));
+  const k = classifyMedia(mime, "");
+  return k === "image" ? "image" : k === "audio" ? "audio" : "other";
+}
+function filterImagesByKinds(imagesMap, kinds) {
+  if (!kinds || kinds.size >= JSON_FILE_KIND_CHOICES.length) return imagesMap;
+  const out = {};
+  for (const [id, v] of Object.entries(imagesMap || {})) {
+    if (kinds.has(jsonKindOfDataUrl(v))) out[id] = v;
+  }
+  return out;
+}
 
 // Module-scope so it can't hit useTerms — `label` and `desc` are resolved
 // at render time via resolveCatLabel / resolveCatDesc below. Exported so
@@ -563,6 +589,15 @@ export default function DataBackupRestore({ section = "all", onExternalFile, exp
   const hasManySystems = allSystems.length > 1;
   const [systemsScope, setSystemsScope] = useState("active");
   const [catSizes, setCatSizes] = useState(null); // { catId: sizeKB } — lazy loaded
+  // Which file types ride in the normal backup file (see JSON_FILE_KIND_CHOICES),
+  // and the per-type counts / sizes / "skip in backups" tallies for the panel.
+  const [jsonKinds, setJsonKinds] = useState(() => new Set(JSON_FILE_KIND_CHOICES.map((c) => c.id)));
+  const toggleJsonKind = (id) => setJsonKinds((prev) => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+  const [kindStats, setKindStats] = useState(null);
 
   // Fetch and cache the full dump + images + fonts once
   const fullDumpRef = useRef(null);
@@ -577,7 +612,19 @@ export default function DataBackupRestore({ section = "all", onExternalFile, exp
   const fetchFullDump = useCallback(async ({ fresh = false, skipBlobs = false } = {}) => {
     if (fullDumpRef.current && !fresh) return { dump: fullDumpRef.current, images: fullImagesRef.current, fonts: fullFontsRef.current, imagesFailed: false };
     const dump = getFullDbDump();
-    if (skipBlobs) return { dump, images: {}, fonts: {}, imagesFailed: false };
+    if (skipBlobs) {
+      // The data-only export drops the heavy pictures but KEEPS the font
+      // files when they're small: fonts are typically a few hundred KB, and
+      // leaving them out made a restored backup point at fonts that weren't
+      // on the device, so the whole UI fell back to the default typeface.
+      // Too big (or unreadable) -> dropped as before, to keep the OOM guard.
+      let smallFonts = {};
+      try {
+        const all = await getAllLocalFonts();
+        if (JSON.stringify(all).length <= 4_000_000) smallFonts = all;
+      } catch { /* leave fonts out */ }
+      return { dump, images: {}, fonts: smallFonts, imagesFailed: false };
+    }
     let images = {};
     let imagesFailed = false;
     // A failed image read must NOT be cached — pre-v0.95.2 one bad read
@@ -635,7 +682,10 @@ export default function DataBackupRestore({ section = "all", onExternalFile, exp
 
   const handleToggleSelectiveOpen = () => {
     setSelectiveOpen(v => {
-      if (!v) computeCatSizes();
+      if (!v) {
+        computeCatSizes();
+        computeFileKindStats().then(setKindStats).catch(() => setKindStats(null));
+      }
       return !v;
     });
   };
@@ -673,8 +723,16 @@ export default function DataBackupRestore({ section = "all", onExternalFile, exp
     // FILES. Their records — the library's names, folders and owners —
     // stay in: they're tiny, and leaving them out meant restoring a
     // data-only backup erased the whole asset library.
-    const imagesExport = activeCats.has("images") && !omitBlobs ? images : {};
-    const fontsExport = activeCats.has("fonts") && !omitBlobs ? fonts : {};
+    let imagesExport = activeCats.has("images") && !omitBlobs ? images : {};
+    if (activeCats.has("images") && !omitBlobs) {
+      // Files marked "skip in backups" (Assets library) and file types switched
+      // off in Advanced stay out of this file. Nothing is deleted from the device.
+      imagesExport = filterImagesBySkip(imagesExport, await loadBackupSkip());
+      imagesExport = filterImagesByKinds(imagesExport, jsonKinds);
+    }
+    // Fonts ride along even in the data-only export (fetchFullDump already
+    // dropped them there if they were too big).
+    const fontsExport = activeCats.has("fonts") ? fonts : {};
     const nowIso = new Date().toISOString();
     // Which categories this file speaks for, so Replace All on import
     // replaces only those and keeps everything else on the device.
@@ -879,6 +937,24 @@ export default function DataBackupRestore({ section = "all", onExternalFile, exp
       setExportLoading(false);
     }
   };
+  // One type of file as its own .zip — Pictures, Audio, Videos or Attachments —
+  // so a huge video library never has to ride along with the pictures.
+  const handleExportKindZip = async (kind) => {
+    setExportLoading(true);
+    try {
+      const { exportAllFilesZipParts } = await import("@/lib/mediaBackup");
+      const whatByKind = { image: "pictures", audio: "audio", video: "videos", file: "attachments" };
+      const r = await exportAllFilesZipParts({ maxBytes: Infinity, kinds: [kind], what: whatByKind[kind] });
+      const label = FILE_KIND_LABELS[kind].toLowerCase();
+      if (!r.items) showStatus("error", `No ${label} to back up${kindStats?.[kind]?.skipped ? " (the ones you marked \u201cskip in backups\u201d are left out)" : ""}.`);
+      else if (r.cancelled) showStatus("error", "Stopped before saving.");
+      else showStatus("success", `${r.items} ${label} file${r.items === 1 ? "" : "s"} zipped 📁`);
+    } catch (e) {
+      showStatus("error", `Export failed: ${e.message}`);
+    } finally {
+      setExportLoading(false);
+    }
+  };
   // ONE zip: data + every picture, audio, video and attachment. Never split.
   const handleExportEverythingZip = async () => {
     setExportLoading(true);
@@ -1000,6 +1076,7 @@ export default function DataBackupRestore({ section = "all", onExternalFile, exp
     // restore that dropped them look identical from the outside.
     traceStep("images in file", `${localImages ? Object.keys(localImages).length : 0}`);
     if (localImages) imageResult = await restoreLocalImages(localImages);
+    traceStep("fonts in file", `${localFonts ? Object.keys(localFonts).length : 0}`);
     if (localFonts) fontResult = await restoreLocalFonts(localFonts);
     if (imageResult) {
       traceStep("images restored", `${imageResult.restored} of ${imageResult.total}${imageResult.failed.length ? ` (${imageResult.failed.length} failed)` : ""}`);
@@ -1986,7 +2063,8 @@ export default function DataBackupRestore({ section = "all", onExternalFile, exp
                 </div>
                 <div className="space-y-1">
                   {EXPORT_CATEGORIES.map(cat => (
-                    <label key={cat.id} className="flex items-center gap-2.5 py-1.5 px-1 rounded-lg hover:bg-muted/20 cursor-pointer">
+                    <React.Fragment key={cat.id}>
+                    <label className="flex items-center gap-2.5 py-1.5 px-1 rounded-lg hover:bg-muted/20 cursor-pointer">
                       <input type="checkbox" checked={selectedCats.has(cat.id)} onChange={() => toggleCat(cat.id)}
                         className="w-4 h-4 rounded accent-primary flex-shrink-0" />
                       <div className="flex-1 min-w-0">
@@ -1998,6 +2076,31 @@ export default function DataBackupRestore({ section = "all", onExternalFile, exp
                         <p className="text-xs text-muted-foreground">{cat.isImages ? "Excluding this means files won't transfer" : resolveCatDesc(cat, terms)}</p>
                       </div>
                     </label>
+                    {cat.isImages && selectedCats.has("images") && (
+                      <div className="ml-9 mb-1 rounded-lg border border-border/40 px-2.5 py-2 space-y-1">
+                        <p className="text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">File types in this backup</p>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1">
+                          {JSON_FILE_KIND_CHOICES.map((c) => (
+                            <label key={c.id} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                              <input type="checkbox" checked={jsonKinds.has(c.id)} onChange={() => toggleJsonKind(c.id)}
+                                className="w-3.5 h-3.5 rounded accent-primary" />
+                              {c.label}
+                            </label>
+                          ))}
+                        </div>
+                        {jsonKinds.size < JSON_FILE_KIND_CHOICES.length && (
+                          <p className="text-[0.6875rem] text-amber-700 dark:text-amber-400 leading-snug">
+                            Unticked types are left out of this backup file only — they stay on this device. Back them up separately below, or they won't transfer.
+                          </p>
+                        )}
+                        {kindStats && FILE_KINDS.some((k) => kindStats[k].skipped > 0) && (
+                          <p className="text-[0.6875rem] text-muted-foreground leading-snug">
+                            {FILE_KINDS.reduce((n, k) => n + kindStats[k].skipped, 0)} file(s) are marked “Skip in backups” in your Assets library and are left out of every backup.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    </React.Fragment>
                   ))}
                 </div>
 
@@ -2037,6 +2140,32 @@ export default function DataBackupRestore({ section = "all", onExternalFile, exp
                   </div>
                   <p className="text-[0.6875rem] text-muted-foreground leading-snug">
                     Backup = importable on another device (pairs with a data-only backup; holds pictures and audio). Zip = every file — pictures, audio, videos and attachments — with its real name and type, in folders you can open anywhere. Everything as one .zip = your data plus every file in a single file; restore it with Import from File.
+                  </p>
+                </div>
+
+                {/* One zip per TYPE of file, so a big video library never has
+                    to ride along with the pictures (and vice versa). */}
+                <div className="border-t border-border/30 pt-2 space-y-1.5">
+                  <p className="text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">Back up one type at a time</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {FILE_KINDS.map((k) => {
+                      const st = kindStats?.[k];
+                      return (
+                        <Button key={k} size="sm" variant="outline" onClick={() => handleExportKindZip(k)}
+                          disabled={exportLoading || (st && st.count === 0)} className="text-xs h-auto py-1.5 gap-1.5 justify-start">
+                          <Share2 className="w-3.5 h-3.5 flex-shrink-0" />
+                          <span className="text-left min-w-0">
+                            <span className="block font-medium">{FILE_KIND_LABELS[k]} .zip</span>
+                            <span className="block text-[0.625rem] font-normal text-muted-foreground">
+                              {st ? `${st.count} file${st.count === 1 ? "" : "s"} · ${formatBytes(st.bytes)}${st.skipped ? ` · ${st.skipped} skipped` : ""}` : "…"}
+                            </span>
+                          </span>
+                        </Button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[0.6875rem] text-muted-foreground leading-snug">
+                    Each is its own .zip you can open anywhere, and Import restores it back into the app. Files you marked “Skip in backups” in the Assets library are left out.
                   </p>
                 </div>
               </div>

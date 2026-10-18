@@ -20,6 +20,7 @@ import { isNative } from "@/lib/platform";
 import { base44 } from "@/api/base44Client";
 import { listLocalImageIds, getLocalImage, saveLocalImage, dataUrlToBlob, getLocalImageId } from "@/lib/localImageStorage";
 import { listMedia, getMedia, saveMedia, playableBlob, extForMime, sniffExt, classifyMedia, nameWithRealExt } from "@/lib/mediaStore";
+import { loadBackupSkip, skipKeyForImage, skipKeyForMedia } from "@/lib/backupSkip";
 
 export const MB = 1024 * 1024;
 export const PART_SIZE_CHOICES_MB = [25, 50, 100, 250, 500];
@@ -120,6 +121,46 @@ async function exportZipParts({ what, items, maxBytes, describe, onProgress }) {
   return { parts: groups.length, total: groups.length, items: items.length, location, via };
 }
 
+// "image" | "audio" | "video" | "file" for something in the picture store
+// (which also holds audio and the odd attachment). Uses the stored type, and
+// only peeks at the first bytes when the type is missing.
+async function kindOfImageBlob(b) {
+  const mime = b.type || "";
+  if (mime) return classifyMedia(mime, "");
+  const head = new Uint8Array(await b.slice(0, 16).arrayBuffer());
+  const ext = sniffExt(head);
+  return classifyMedia(ext ? `x/${ext}` : "", ext ? `x.${ext}` : "");
+}
+
+export const FILE_KINDS = ["image", "audio", "video", "file"];
+export const FILE_KIND_LABELS = { image: "Pictures", audio: "Audio", video: "Videos", file: "Attachments & other files" };
+
+// How many files / bytes of each type this device holds, and how many of them
+// are marked "skip in backups". { image: { count, bytes, skipped }, … }
+export async function computeFileKindStats() {
+  const skip = await loadBackupSkip();
+  const out = Object.fromEntries(FILE_KINDS.map((k) => [k, { count: 0, bytes: 0, skipped: 0 }]));
+  try {
+    for (const id of await listLocalImageIds()) {
+      const b = await imageAsBlob(id);
+      if (!b) continue;
+      const kind = await kindOfImageBlob(b);
+      out[kind].count += 1;
+      out[kind].bytes += b.size;
+      if (skip.has(skipKeyForImage(id))) out[kind].skipped += 1;
+    }
+  } catch { /* the picture store couldn't be read — show what we have */ }
+  try {
+    for (const m of await listMedia()) {
+      const kind = FILE_KINDS.includes(m.kind) ? m.kind : "file";
+      out[kind].count += 1;
+      out[kind].bytes += m.size || 0;
+      if (skip.has(skipKeyForMedia(m.id))) out[kind].skipped += 1;
+    }
+  } catch { /* the files store couldn't be read */ }
+  return out;
+}
+
 // ── Everything → .zip parts ──────────────────────────────────────────────────
 
 const FOLDER_FOR_KIND = { image: "Pictures", audio: "Audio", video: "Videos", file: "Files" };
@@ -140,18 +181,28 @@ async function libraryNames() {
 
 // pictures: the image store (pictures AND audio kept there)
 // media:    the attached files / videos store
-export async function exportAllFilesZipParts({ maxBytes = DEFAULT_PART_SIZE_MB * MB, onProgress, pictures = true, media = true, extraEntries = null, what = null } = {}) {
+// kinds: optional list of types to include — any of "image" | "audio" | "video"
+// | "file" (default: all). Files marked "skip in backups" in the Assets
+// library are left out unless includeSkipped is true.
+export async function exportAllFilesZipParts({ maxBytes = DEFAULT_PART_SIZE_MB * MB, onProgress, pictures = true, media = true, extraEntries = null, what = null, kinds = null, includeSkipped = false } = {}) {
+  const wanted = kinds && kinds.length ? new Set(kinds) : null;
+  const skip = includeSkipped ? new Set() : await loadBackupSkip();
   const names = pictures ? await libraryNames() : new Map();
   const items = [];
   if (pictures) {
     for (const id of await listLocalImageIds()) {
+      if (skip.has(skipKeyForImage(id))) continue;
       const b = await imageAsBlob(id);
-      if (b) items.push({ key: `i:${id}`, size: b.size });
+      if (!b) continue;
+      if (wanted && !wanted.has(await kindOfImageBlob(b))) continue;
+      items.push({ key: `i:${id}`, size: b.size });
     }
   }
   const mediaById = new Map();
   if (media) {
     for (const m of await listMedia()) {
+      if (skip.has(skipKeyForMedia(m.id))) continue;
+      if (wanted && !wanted.has(FILE_KINDS.includes(m.kind) ? m.kind : "file")) continue;
       mediaById.set(m.id, m);
       items.push({ key: `m:${m.id}`, size: m.size || 0 });
     }

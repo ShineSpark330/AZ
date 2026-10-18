@@ -22,6 +22,7 @@
 import { getFullDbDump, isReservedDbKey } from "@/lib/localDb";
 import { stripDeviceBound, stripUnsharedSecrets } from "@/lib/backupPolicy";
 import { getAllLocalImages, countLocalImages, getLocalImagesTotalBytes } from "@/lib/localImageStorage";
+import { loadBackupSkip, filterImagesBySkip } from "@/lib/backupSkip";
 import { getAllLocalFonts, listLocalFontIds } from "@/lib/localFontStorage";
 import { readBackupLocalSettings } from "@/lib/backupKeys";
 import { isNative } from "@/lib/platform";
@@ -390,6 +391,9 @@ export async function buildFullBackupPayload({ allSystems = "best", skipMedia = 
       const held = await countLocalImages();
       if (held > 0 && Object.keys(images).length < held) imagesUnread = true;
     } catch { /* count unavailable — can't tell */ }
+    // Files the person marked "Skip in backups" (Assets library) stay out.
+    // Done AFTER the unread check so a skip never looks like a read failure.
+    try { images = filterImagesBySkip(images, await loadBackupSkip()); } catch { /* keep everything */ }
   }
   let fonts = {};
   let fontsUnread = false;

@@ -1849,13 +1849,15 @@ export default function CheckInLog() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setCustomNoteOpen(true)} className="gap-1.5">
-            <Plus className="w-4 h-4" /> Note
+          <Button variant="outline" size="icon" onClick={() => setCustomNoteOpen(true)}
+            aria-label="Add note" title="Add note" className="flex-shrink-0 h-9 w-9 rounded-full">
+            <Plus className="w-4 h-4" />
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" data-tour="checkin-log-display" className="gap-1.5">
-                <SlidersHorizontal className="w-4 h-4" /> Display
+              <Button variant="outline" size="icon" data-tour="checkin-log-display"
+                aria-label="Display options" title="Display options" className="flex-shrink-0 h-9 w-9 rounded-full">
+                <SlidersHorizontal className="w-4 h-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
@@ -1897,8 +1899,9 @@ export default function CheckInLog() {
               diary cards) so we no longer gate the button on diary cards
               specifically. The component itself handles the empty-state
               for accounts with no data anywhere. */}
-          <Button variant="outline" onClick={() => setView("analytics")} className="gap-1.5">
-            <BarChart2 className="w-4 h-4" /> Analytics
+          <Button variant="outline" size="icon" onClick={() => setView("analytics")}
+            aria-label="Analytics" title="Analytics" className="flex-shrink-0 h-9 w-9 rounded-full">
+            <BarChart2 className="w-4 h-4" />
           </Button>
         </div>
       </div>

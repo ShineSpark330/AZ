@@ -807,6 +807,8 @@ See "Critical: Data Backup / Restore Coverage" at top for the ENTITY_NAMES + EXP
   - `PushSubscription` — per-browser push registration.
   - Plus localStorage keys `symphony_native_reminder_log_v1` and `symphony_plan_reminder_log_v1` (native OS notification ids that only mean anything on the installing device).
   Document any new device-bound entity in the comment block above `ENTITY_NAMES`.
+- **"Skip in backups" (v0.257.0).** `src/lib/backupSkip.js` stores `SystemSettings.backup_skip = { keys: ["i:<imageId>", "m:<mediaId>"] }` (same `i:`/`m:` keys the zip exports use). The Assets library toggles it per file and per folder (a folder toggle just marks the files in it at that moment). Marked files are left out of manual JSON exports, every `.zip` export (`exportAllFilesZipParts`) and automatic backups (`buildFullBackupPayload`, filtered AFTER the unread check). It only controls what is COPIED into a backup — never delete or change a file because of it, default is always "include", and new uploads are never auto-skipped.
+- **File types in exports (v0.257.0).** Advanced export has "File types in this backup" (Pictures / Audio / Other files) under Local Files & Assets — it filters `__local_images` by data-URL mime (`filterImagesByKinds`). Videos and attachments live in the files store (`mediaStore`) and only travel in zips; `exportAllFilesZipParts({ kinds })` + the "Back up one type at a time" buttons export one type per zip.
 
 ---
 

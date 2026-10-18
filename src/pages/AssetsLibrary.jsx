@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import {
   Images, Upload, Loader2, Trash2, Pencil, FolderInput, FolderPlus, Search, SlidersHorizontal,
   ChevronRight, ArrowUp, ArrowDown, X, UserPlus2, Users, ArrowLeft, CheckSquare, Check, Folder,
-  Download, Film, Music, File as FileIcon,
+  Download, Film, Music, File as FileIcon, Cloud, CloudOff,
 } from "lucide-react";
 import AlterSearchSelect from "@/components/shared/AlterSearchSelect";
 import SearchableSelect from "@/components/shared/SearchableSelect";
@@ -21,6 +21,7 @@ import {
   processUploadedImage, saveLocalImage, createLocalImageUrl,
 } from "@/lib/localImageStorage";
 import { isLocalMode } from "@/lib/storageMode";
+import { skipKeyForImage, skipKeyForMedia, setBackupSkipKeys } from "@/lib/backupSkip";
 import {
   listMedia, getMedia, renameMedia, deleteMedia, saveMedia, playableBlob, formatBytes,
   classifyMedia, nameWithRealExt,
@@ -74,7 +75,7 @@ function MediaFace({ item }) {
 
 const ICON_BTN = "p-1.5 rounded text-muted-foreground hover:bg-muted/60";
 
-function Thumb({ item, onSaveToLibrary, onRename, onMove, onDelete, onSaveDevice, selecting = false, selected = false, onToggle, showFolder = false }) {
+function Thumb({ item, onSaveToLibrary, onRename, onMove, onDelete, onSaveDevice, onToggleBackup, backupSkipped = false, selecting = false, selected = false, onToggle, showFolder = false }) {
   const resolved = useResolvedAvatarUrl(item.url);
   // Pictures only referenced by a record / built into the app can't be
   // moved or deleted from here — in select mode they're dimmed, not pickable.
@@ -89,6 +90,7 @@ function Thumb({ item, onSaveToLibrary, onRename, onMove, onDelete, onSaveDevice
           ? <img src={resolved} alt={item.name} className="w-full h-full object-cover" loading="lazy" />
           : <span className="w-full h-full flex items-center justify-center text-muted-foreground"><Images className="w-5 h-5" /></span>}
       {item.isGif && <span className="absolute top-1 left-1 text-[0.5rem] font-bold px-1 rounded bg-black/60 text-white">GIF</span>}
+      {backupSkipped && <span title="Skipped in backups" className="absolute bottom-1 left-1 rounded-full bg-black/60 text-white p-0.5"><CloudOff className="w-3 h-3" /></span>}
       {selecting && pickable && (
         <span className={`absolute top-1 right-1 w-5 h-5 rounded-full border-2 flex items-center justify-center ${
           selected ? "bg-primary border-primary text-primary-foreground" : "bg-black/40 border-white/80"}`}>
@@ -115,6 +117,14 @@ function Thumb({ item, onSaveToLibrary, onRename, onMove, onDelete, onSaveDevice
             <button type="button" onClick={() => onRename(item)} title="Rename" aria-label={`Rename ${item.name}`} className={`${ICON_BTN} hover:text-foreground`}><Pencil className="w-3.5 h-3.5" /></button>
           )}
           <button type="button" onClick={() => onSaveDevice(item)} title="Save to device" aria-label={`Save ${item.name} to device`} className={`${ICON_BTN} hover:text-foreground`}><Download className="w-3.5 h-3.5" /></button>
+          {!item.refOnly && onToggleBackup && (
+            <button type="button" onClick={() => onToggleBackup(item)} aria-pressed={backupSkipped}
+              title={backupSkipped ? "Skipped in backups — tap to include it again" : "Included in backups — tap to skip it"}
+              aria-label={backupSkipped ? `Include ${item.name} in backups` : `Skip ${item.name} in backups`}
+              className={`${ICON_BTN} ${backupSkipped ? "text-amber-600 dark:text-amber-400" : "hover:text-foreground"}`}>
+              {backupSkipped ? <CloudOff className="w-3.5 h-3.5" /> : <Cloud className="w-3.5 h-3.5" />}
+            </button>
+          )}
           {item.isMedia ? null : item.refOnly ? (
             // In use on a record / built into the app — can be copied into the
             // library (to name / organise / reuse), not deleted from here.
@@ -232,6 +242,37 @@ export default function AssetsLibrary() {
   const { data: settingsList = [] } = useQuery({ queryKey: ["systemSettings"], queryFn: () => base44.entities.SystemSettings.list() });
   const settingsRow = settingsList[0] || null;
   const rules = useMemo(() => resolveAssetRules(settingsRow), [settingsRow]);
+  // "Skip in backups" — per file or per folder. Everything is backed up unless
+  // marked here; marking only leaves a file OUT of backups (it's never deleted
+  // or changed), so a skipped file lives only on this device.
+  const backupSkipSet = useMemo(
+    () => new Set(Array.isArray(settingsRow?.backup_skip?.keys) ? settingsRow.backup_skip.keys : []),
+    [settingsRow],
+  );
+  const backupKeyOf = (item) => (item.refOnly ? null : item.isMedia ? skipKeyForMedia(item.mediaId) : skipKeyForImage(item.id));
+  const isBackupSkipped = (item) => { const k = backupKeyOf(item); return !!k && backupSkipSet.has(k); };
+  const toggleBackupSkip = async (item) => {
+    const k = backupKeyOf(item);
+    if (!k) return;
+    const skip = !backupSkipSet.has(k);
+    try {
+      await setBackupSkipKeys([k], skip);
+      qc.invalidateQueries({ queryKey: ["systemSettings"] });
+      toast.success(skip ? "Left out of backups (it stays on this device only)" : "Included in backups again");
+    } catch (e) { toast.error(e?.message || "Couldn't change that"); }
+  };
+  // Applies to the files that are in the folder right now; files added later
+  // are included by default.
+  const setFolderBackupSkip = async (list, skip) => {
+    const keys = list.map(backupKeyOf).filter(Boolean);
+    if (!keys.length) return;
+    if (skip && !(await confirm(`Leave ${keys.length} file${keys.length === 1 ? "" : "s"} in this folder out of every backup? They stay on this device, but they won't be in an exported or automatic backup — if this device is lost or wiped, they can't be restored. Files you add later are still included.`))) return;
+    try {
+      await setBackupSkipKeys(keys, skip);
+      qc.invalidateQueries({ queryKey: ["systemSettings"] });
+      toast.success(skip ? `${keys.length} left out of backups` : `${keys.length} included in backups again`);
+    } catch (e) { toast.error(e?.message || "Couldn't change that"); }
+  };
   const AUTO_FOLDERS = useMemo(() => new Set([...autoFolderNames(rules), BUILT_IN_FOLDER, FILES_FOLDER]), [rules]);
   const autoFolderFor = (id) => autoFolderForRules(id, rules);
   const alterFolderName = (alterId, role) => alterFolderNameRules(alterNameById[alterId] || "Unknown alter", role, rules);
@@ -647,6 +688,7 @@ export default function AssetsLibrary() {
       <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
         {list.slice(0, limit).map((item) => (
           <Thumb key={item.key} item={item} onSaveToLibrary={saveToLibrary} onRename={renameAsset} onMove={moveAsset} onDelete={del} onSaveDevice={saveItemToDevice}
+            onToggleBackup={toggleBackupSkip} backupSkipped={isBackupSkipped(item)}
             selecting={selecting} selected={selectedKeys.has(item.key)} onToggle={toggleSelect} showFolder={showFolder} />
         ))}
       </div>
@@ -750,6 +792,18 @@ export default function AssetsLibrary() {
             <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/60 flex-shrink-0" />
             <span className="font-medium truncate flex-1 min-w-0">{openFolder}</span>
             <span className="text-[0.625rem] text-muted-foreground flex-shrink-0">{folderList.length}</span>
+            {!selecting && folderList.some((i) => !i.refOnly) && (() => {
+              const real = folderList.filter((i) => !i.refOnly);
+              const allSkipped = real.every(isBackupSkipped);
+              return (
+                <button type="button" onClick={() => setFolderBackupSkip(real, !allSkipped)}
+                  title={allSkipped ? "Everything here is skipped in backups — tap to include it again" : "Leave every file in this folder out of backups"}
+                  aria-label={allSkipped ? "Include this folder in backups" : "Skip this folder in backups"}
+                  className={`p-1 rounded hover:bg-muted/60 flex-shrink-0 ${allSkipped ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground hover:text-foreground"}`}>
+                  {allSkipped ? <CloudOff className="w-3.5 h-3.5" /> : <Cloud className="w-3.5 h-3.5" />}
+                </button>
+              );
+            })()}
             {openUser && !selecting && (
               <span className="flex items-center gap-0.5 flex-shrink-0">
                 <button type="button" onClick={() => setOwnershipDialog(openFolder)} aria-label={ownerIds.length ? "Change owners" : "Assign owner"}

@@ -42,6 +42,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Stamp the run with the versions actually in this commit, so it is
+      # obvious which build an APK came from (also names the artifact).
+      - name: Show build version
+        run: |
+          APPV=$(grep -oP 'APP_VERSION = "\K[^"]+' src/lib/appVersion.js)
+          GRADLEV=$(grep -oP 'versionName "\K[^"]+' android/app/build.gradle)
+          GRADLEC=$(grep -oP 'versionCode \K[0-9]+' android/app/build.gradle)
+          echo "VER=$APPV" >> "$GITHUB_ENV"
+          {
+            echo "### Built app v$APPV"
+            echo "- src/lib/appVersion.js: \`$APPV\`"
+            echo "- android/app/build.gradle: versionName \`$GRADLEV\`, versionCode \`$GRADLEC\`"
+            echo "- commit: \`${GITHUB_SHA::7}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "App v$APPV | gradle $GRADLEV ($GRADLEC) | commit ${GITHUB_SHA::7}"
+
       - name: Build web app
         run: npm run build
 
@@ -68,6 +84,6 @@ jobs:
       - name: Keep the APK as a run artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OceansSymphony-debug-apk
+          name: OceansSymphony-debug-apk-v${{ env.VER }}
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
