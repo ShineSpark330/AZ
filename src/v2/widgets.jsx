@@ -2693,10 +2693,17 @@ function SymptomAnalyticsWidget({ settings }) {
 // qualifiers at minimal, and the list widgets read it for how many rows to
 // show. Nothing else about them changes.
 // The Song widget. Its heading is the display name the user typed, else
-// the song's own title — never the bare word "Song" while a named song is
-// set. Songs picked from the library before titles were filled in carry
+// "Song: <title of the file that's set>" — it renames itself whenever a
+// different song is picked. With no song yet it goes by the generic name.
+// Songs picked from the library before titles were filled in carry
 // "Song" as their title; those look their name up in the library.
 const DEFAULT_SONG_LABEL = "Songs/Background Music";
+// "Song: Calm Waters" — long titles are clipped so the heading stays on one line.
+function songHeading(title) {
+  const t = typeof title === "string" ? title.trim() : "";
+  if (!t || t === GENERIC_SONG_TITLE) return DEFAULT_SONG_LABEL;
+  return `Song: ${t.length > 40 ? `${t.slice(0, 39).trimEnd()}…` : t}`;
+}
 function SongWidget({ settings }) {
   const song = settings?.song?.ref ? settings.song : null;
   const own = songDisplayTitle(song);
@@ -2707,7 +2714,7 @@ function SongWidget({ settings }) {
     enabled: needsLookup,
   });
   const title = needsLookup ? songDisplayTitle(song, assets) : own;
-  const label = (typeof settings?.label === "string" && settings.label.trim()) || DEFAULT_SONG_LABEL;
+  const label = (typeof settings?.label === "string" && settings.label.trim()) || (song ? songHeading(title) : DEFAULT_SONG_LABEL);
   return (
     <Section label={label}>
       {song
@@ -3183,9 +3190,10 @@ export const V2_WIDGETS = {
     label: "Song", description: "A song that plays while this page is open.",
     icon: Music, category: "support",
     render: sized(({ settings }) => <SongWidget settings={settings} />),
-    // With no display name of its own, the widget goes by this generic name
+    // With no display name of its own, the widget goes by "Song: <title>" —
+    // following whichever song is set — or the generic name until one is
     // (the options sheet and edit-mode labels read this too).
-    autoLabel: () => DEFAULT_SONG_LABEL,
+    autoLabel: (settings) => (settings?.song?.ref ? songHeading(songDisplayTitle(settings.song)) : DEFAULT_SONG_LABEL),
     supportsModes: ["normal"], supportsMultiInstance: true,
     configFields: [{ key: "song", type: "song", label: "Song" }],
     defaultSpan: { cols: 4, rows: 1 }, minSpan: { cols: 2, rows: 1 }, maxSpan: { cols: 12, rows: 2 },

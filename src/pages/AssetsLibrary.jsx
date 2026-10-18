@@ -48,6 +48,9 @@ const AUDIO_FOLDER = "Audio";
 const OTHERS_FOLDER = "Others";
 // Songs uploaded through a song widget / profile song live in the picture store.
 const SONGS_AUDIO_FOLDER = "Songs Audio";
+// Where a deleted folder's files go when the user keeps them. Built in, so it
+// can't be renamed or deleted like a folder the user made.
+const UNORGANIZED_FOLDER = "Unorganized";
 const mediaFolderFor = (kind) => (kind === "video" ? VIDEOS_FOLDER : kind === "audio" ? AUDIO_FOLDER : OTHERS_FOLDER);
 // Videos get a folder of their own — never mixed in with other attached files.
 const VIDEOS_FOLDER = "Videos";
@@ -167,13 +170,25 @@ function Thumb({ item, onSaveToLibrary, onRename, onMove, onDelete, onSaveDevice
 }
 
 // A folder in the folder grid: its first image as the cover, name, count.
-function FolderTile({ name, items, onOpen }) {
+function FolderTile({ name, items, onOpen, selecting = false, selectable = false, selected = false, onToggle }) {
   // Audio and video items have no picture to show (an <img> of a song is a broken icon).
   const cover = items.find((i) => i.url && i.kind !== "audio" && i.kind !== "video" && !i.isMedia && !String(i.id).startsWith("song-"))?.url || "";
   const resolved = useResolvedAvatarUrl(cover);
+  // In select mode a folder the user made can be ticked (to delete it); the
+  // built-in folders still just open.
+  const pick = selecting && selectable;
   return (
-    <button type="button" onClick={onOpen} className="text-left group">
-      <div className="w-full aspect-square rounded-xl overflow-hidden border border-border/50 bg-muted/30 flex items-center justify-center group-hover:border-primary/50 transition-colors">
+    <button type="button" onClick={pick ? onToggle : onOpen} className="text-left group"
+      aria-pressed={pick ? selected : undefined}
+      aria-label={pick ? `${selected ? "Deselect" : "Select"} folder ${name}` : undefined}>
+      <div className={`relative w-full aspect-square rounded-xl overflow-hidden border bg-muted/30 flex items-center justify-center transition-colors ${
+        selected ? "border-primary ring-2 ring-primary" : "border-border/50 group-hover:border-primary/50"}`}>
+        {pick && (
+          <span className={`absolute top-1.5 right-1.5 z-10 w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+            selected ? "bg-primary border-primary text-primary-foreground" : "bg-black/40 border-white/80"}`}>
+            {selected && <Check className="w-3 h-3" />}
+          </span>
+        )}
         {resolved
           ? <img src={resolved} alt="" className="w-full h-full object-cover" loading="lazy" />
           : name === VIDEOS_FOLDER
@@ -187,6 +202,50 @@ function FolderTile({ name, items, onOpen }) {
       <p className="text-xs font-medium truncate mt-1 px-0.5">{name}</p>
       <p className="text-[0.625rem] text-muted-foreground px-0.5">{items.length} item{items.length === 1 ? "" : "s"}</p>
     </button>
+  );
+}
+
+// Confirm deleting folders: either just the folder (its files are kept and
+// land in Unorganized) or the folder AND everything in it.
+function FolderDeleteDialog({ folders, onCancel, onKeepFiles, onDeleteAll }) {
+  const totalFiles = folders.reduce((n, f) => n + f.count, 0);
+  const many = folders.length > 1;
+  const shown = folders.slice(0, 5);
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onCancel(); }}>
+      <DialogContent className="max-w-sm">
+        <DialogTitle className="text-sm">Delete {many ? `${folders.length} folders` : "this folder"}?</DialogTitle>
+        <div className="text-xs text-muted-foreground space-y-0.5">
+          {shown.map((f) => (
+            <p key={f.name} className="flex items-center justify-between gap-2">
+              <span className="truncate text-foreground">{f.name}</span>
+              <span className="flex-shrink-0">{f.count} file{f.count === 1 ? "" : "s"}</span>
+            </p>
+          ))}
+          {folders.length > shown.length && <p>+ {folders.length - shown.length} more</p>}
+        </div>
+        {totalFiles === 0 ? (
+          <p className="text-xs text-muted-foreground">{many ? "These folders are" : "This folder is"} empty.</p>
+        ) : (
+          <p className="text-xs text-muted-foreground">Choose what happens to the files inside.</p>
+        )}
+        <div className="flex flex-col gap-2">
+          <button type="button" onClick={onKeepFiles}
+            className="w-full rounded-lg border border-border px-3 py-2 text-left hover:bg-muted/40">
+            <span className="block text-sm font-medium">{totalFiles === 0 ? `Delete ${many ? "folders" : "folder"}` : `Delete ${many ? "folders" : "folder"} only`}</span>
+            {totalFiles > 0 && <span className="block text-xs text-muted-foreground">Keeps the files — they move to “{UNORGANIZED_FOLDER}”.</span>}
+          </button>
+          {totalFiles > 0 && (
+            <button type="button" onClick={onDeleteAll}
+              className="w-full rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-left text-destructive hover:bg-destructive/15">
+              <span className="block text-sm font-medium">Delete {many ? "folders" : "folder"} and all files</span>
+              <span className="block text-xs opacity-80">Permanently deletes {totalFiles} file{totalFiles === 1 ? "" : "s"}. Can&apos;t be undone.</span>
+            </button>
+          )}
+          <button type="button" onClick={onCancel} className="w-full h-9 rounded-lg border border-border text-sm">Cancel</button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -245,7 +304,10 @@ export default function AssetsLibrary() {
   const [selectedKeys, setSelectedKeys] = useState(() => new Set());
   const [moveOpen, setMoveOpen] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
-  const stopSelecting = () => { setSelecting(false); setSelectedKeys(new Set()); };
+  // Folders ticked in select mode (on the folder grid), to delete.
+  const [selectedFolders, setSelectedFolders] = useState(() => new Set());
+  const [folderDeleteOpen, setFolderDeleteOpen] = useState(false);
+  const stopSelecting = () => { setSelecting(false); setSelectedKeys(new Set()); setSelectedFolders(new Set()); setFolderDeleteOpen(false); };
 
   useEffect(() => { saveArr(ORDER_KEY, folderOrder); }, [folderOrder]);
   // Uploads filed from elsewhere (an alter's avatar) announce themselves.
@@ -301,7 +363,7 @@ export default function AssetsLibrary() {
       toast.success(skip ? `${keys.length} left out of backups` : `${keys.length} included in backups again`);
     } catch (e) { toast.error(e?.message || "Couldn't change that"); }
   };
-  const AUTO_FOLDERS = useMemo(() => new Set([...autoFolderNames(rules), BUILT_IN_FOLDER, AUDIO_FOLDER, OTHERS_FOLDER, SONGS_AUDIO_FOLDER, VIDEOS_FOLDER]), [rules]);
+  const AUTO_FOLDERS = useMemo(() => new Set([...autoFolderNames(rules), BUILT_IN_FOLDER, AUDIO_FOLDER, OTHERS_FOLDER, SONGS_AUDIO_FOLDER, VIDEOS_FOLDER, UNORGANIZED_FOLDER]), [rules]);
   const autoFolderFor = (id) => autoFolderForRules(id, rules);
   const alterFolderName = (alterId, role) => alterFolderNameRules(alterNameById[alterId] || "Unknown alter", role, rules);
   const [orgOpen, setOrgOpen] = useState(false);
@@ -430,7 +492,9 @@ export default function AssetsLibrary() {
 
     const isAlterFolder = (f) => f.startsWith(ALTER_FOLDER_PREFIX);
     const userFromItems = [...new Set(filtered.map((i) => i.folder).filter((f) => !AUTO_FOLDERS.has(f) && !isAlterFolder(f)))];
-    const userNames = [...folderOrder];
+    // A saved folder name that is now a built-in one (an old "Audio" folder made
+    // before Audio became built in) would show up twice — keep only the built-in.
+    const userNames = folderOrder.filter((n, i, arr) => n && !AUTO_FOLDERS.has(n) && !isAlterFolder(n) && arr.indexOf(n) === i);
     for (const n of userFromItems) if (!userNames.includes(n)) userNames.push(n);
 
     const alterFolderNames = Object.keys(map).filter(isAlterFolder).sort((a, b) => a.localeCompare(b));
@@ -459,7 +523,7 @@ export default function AssetsLibrary() {
       });
     }
     return { byFolder: map, orderedFolders: ordered };
-  }, [filtered, folderOrder, ownerFilter, assetFolderByName]);
+  }, [filtered, folderOrder, ownerFilter, assetFolderByName, AUTO_FOLDERS]);
 
   // Assign / update / clear the alter-owners set for a user folder. Creates
   // an AssetFolder record on first assignment; deletes it when the user
@@ -686,14 +750,10 @@ export default function AssetsLibrary() {
     stopSelecting();
     toast.success(`Moved ${moved} image${moved === 1 ? "" : "s"}${skipped ? ` · ${skipped} filed under their ${t.alter} stayed put` : ""}`);
   };
-  const bulkDelete = async () => {
-    const n = selectedItems.length;
-    const inUse = selectedItems.filter((i) => usage[i.id]).length;
-    const warn = inUse ? ` ${inUse} of them ${inUse === 1 ? "is" : "are"} in use (an avatar, background or post) and will show as missing there.` : "";
-    if (!(await confirm(`Permanently delete ${n} image${n === 1 ? "" : "s"}?${warn} This can't be undone.`))) return;
-    setBulkBusy(true);
+  // Delete files for good (pictures, videos, audio…); returns how many failed.
+  const deleteItems = async (list) => {
     let failed = 0;
-    for (const item of selectedItems) {
+    for (const item of list) {
       try {
         if (item.isMedia) { await deleteMedia(item.mediaId); continue; }
         if (item.asset) await base44.entities.ImageAsset.delete(item.asset.id);
@@ -701,6 +761,69 @@ export default function AssetsLibrary() {
         if (lid) await deleteLocalImage(lid);
       } catch { failed++; }
     }
+    return failed;
+  };
+
+  // ── Folder deletion (select mode, folder grid) ──────────────────────
+  const toggleFolderSelect = (name) => setSelectedFolders((s) => { const n = new Set(s); n.has(name) ? n.delete(name) : n.add(name); return n; });
+  // Forget a folder once it's empty: drop it from the saved order and clear its owners.
+  const forgetFolder = async (name) => {
+    setFolderOrder((o) => o.filter((n) => n !== name));
+    const rec = assetFolderByName[name];
+    if (rec) { try { await base44.entities.AssetFolder.delete(rec.id); } catch { /* owner note only */ } }
+  };
+  const folderFiles = (name) => items.filter((i) => i.folder === name && !i.refOnly);
+  const deleteSelectedFolders = async (mode) => {
+    const names = [...selectedFolders].filter(isUser);
+    if (!names.length) return;
+    if (mode === "all") {
+      const files = names.flatMap(folderFiles);
+      const inUse = files.filter((i) => usage[i.id]).length;
+      const warn = inUse ? ` ${inUse} of them ${inUse === 1 ? "is" : "are"} in use (an avatar, background or post) and will show as missing there.` : "";
+      setFolderDeleteOpen(false);
+      if (!(await confirm(`Permanently delete ${names.length === 1 ? "this folder" : `these ${names.length} folders`} and ${files.length} file${files.length === 1 ? "" : "s"}?${warn} This can't be undone.`))) { setFolderDeleteOpen(true); return; }
+    }
+    setFolderDeleteOpen(false);
+    setBulkBusy(true);
+    let removed = 0, kept = 0, deleted = 0, failed = 0;
+    for (const name of names) {
+      const list = folderFiles(name);
+      let bad = 0;
+      if (mode === "all") {
+        bad = await deleteItems(list);
+        deleted += list.length - bad;
+      } else {
+        for (const item of list) {
+          try {
+            if (item.isMedia) { bad++; continue; }
+            if (item.asset) await base44.entities.ImageAsset.update(item.asset.id, { folder: UNORGANIZED_FOLDER });
+            else await base44.entities.ImageAsset.create({ name: item.name && item.name !== item.id ? item.name : "Image", image_url: item.url, folder: UNORGANIZED_FOLDER, is_gif: item.isGif, created_date: new Date().toISOString() });
+            kept++;
+          } catch { bad++; }
+        }
+      }
+      failed += bad;
+      // Only forget the folder once nothing is left in it.
+      if (bad === 0) { await forgetFolder(name); removed++; }
+    }
+    qc.invalidateQueries({ queryKey: ["imageAssets"] });
+    qc.invalidateQueries({ queryKey: ["assetFolders"] });
+    await loadImages();
+    setBulkBusy(false);
+    stopSelecting();
+    const fl = `${removed} folder${removed === 1 ? "" : "s"}`;
+    if (failed) toast.error(`${failed} file${failed === 1 ? "" : "s"} couldn't be ${mode === "all" ? "deleted" : "moved"} — their folder was left in place`);
+    else if (mode === "all") toast.success(`Deleted ${fl} and ${deleted} file${deleted === 1 ? "" : "s"}`);
+    else toast.success(kept ? `Deleted ${fl} — ${kept} file${kept === 1 ? "" : "s"} moved to ${UNORGANIZED_FOLDER}` : `Deleted ${fl}`);
+  };
+
+  const bulkDelete = async () => {
+    const n = selectedItems.length;
+    const inUse = selectedItems.filter((i) => usage[i.id]).length;
+    const warn = inUse ? ` ${inUse} of them ${inUse === 1 ? "is" : "are"} in use (an avatar, background or post) and will show as missing there.` : "";
+    if (!(await confirm(`Permanently delete ${n} image${n === 1 ? "" : "s"}?${warn} This can't be undone.`))) return;
+    setBulkBusy(true);
+    const failed = await deleteItems(selectedItems);
     qc.invalidateQueries({ queryKey: ["imageAssets"] });
     await loadImages();
     setBulkBusy(false);
@@ -720,6 +843,9 @@ export default function AssetsLibrary() {
   const selectableInView = gridItems.filter((i) => !i.refOnly);
   const allSelected = selectableInView.length > 0 && selectableInView.every((i) => selectedKeys.has(i.key));
   const userFolderNames = orderedFolders.filter(isUser);
+  // Select mode on the folder grid picks folders (to delete), not files.
+  const folderMode = selecting && !inFolder && !searching;
+  const allFoldersSelected = userFolderNames.length > 0 && userFolderNames.every((f) => selectedFolders.has(f));
   const openUser = inFolder && isUser(openFolder);
   const ownerRec = openUser ? assetFolderByName[openFolder] : null;
   const ownerIds = (ownerRec && Array.isArray(ownerRec.owner_alter_ids)) ? ownerRec.owner_alter_ids : [];
@@ -875,7 +1001,10 @@ export default function AssetsLibrary() {
       ) : (
         <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
           {orderedFolders.map((folder) => (
-            <FolderTile key={folder} name={folder} items={byFolder[folder] || []} onOpen={() => { goFolder(folder); setSelectedKeys(new Set()); }} />
+            <FolderTile key={folder} name={folder} items={byFolder[folder] || []}
+              selecting={selecting} selectable={isUser(folder)} selected={selectedFolders.has(folder)}
+              onToggle={() => toggleFolderSelect(folder)}
+              onOpen={() => { goFolder(folder); setSelectedKeys(new Set()); }} />
           ))}
         </div>
       )}
@@ -884,7 +1013,17 @@ export default function AssetsLibrary() {
       {selecting && (
         <div className="fixed left-0 right-0 z-40 px-3" style={{ bottom: "calc(var(--bottom-nav-height, 56px) + var(--os-sab, 0px) + 8px)" }}>
           <div className="max-w-3xl mx-auto rounded-2xl border border-border bg-card shadow-2xl p-2 flex items-center gap-1.5">
-            <span className="text-xs font-medium px-1.5 flex-shrink-0">{selectedKeys.size} selected</span>
+            <span className="text-xs font-medium px-1.5 flex-shrink-0">
+              {folderMode
+                ? (userFolderNames.length === 0 ? "No folders of yours" : `${selectedFolders.size} folder${selectedFolders.size === 1 ? "" : "s"} selected`)
+                : `${selectedKeys.size} selected`}
+            </span>
+            {folderMode && userFolderNames.length > 0 && (
+              <button type="button" onClick={() => setSelectedFolders(allFoldersSelected ? new Set() : new Set(userFolderNames))}
+                className="text-xs px-2 py-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 flex-shrink-0">
+                {allFoldersSelected ? "None" : "All"}
+              </button>
+            )}
             {(inFolder || searching) && selectableInView.length > 0 && (
               <button type="button" onClick={() => setSelectedKeys(allSelected ? new Set() : new Set(selectableInView.map((i) => i.key)))}
                 className="text-xs px-2 py-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 flex-shrink-0">
@@ -892,17 +1031,28 @@ export default function AssetsLibrary() {
               </button>
             )}
             <span className="flex-1" />
-            <button type="button" disabled={!selectedKeys.size || bulkBusy} onClick={() => setMoveOpen(true)}
-              className="h-8 px-2.5 rounded-lg border border-border text-xs flex items-center gap-1 disabled:opacity-40">
-              <FolderInput className="w-3.5 h-3.5" /> Move
-            </button>
-            <button type="button" disabled={!selectedKeys.size || bulkBusy} onClick={bulkDelete}
+            {!folderMode && (
+              <button type="button" disabled={!selectedKeys.size || bulkBusy} onClick={() => setMoveOpen(true)}
+                className="h-8 px-2.5 rounded-lg border border-border text-xs flex items-center gap-1 disabled:opacity-40">
+                <FolderInput className="w-3.5 h-3.5" /> Move
+              </button>
+            )}
+            <button type="button" disabled={(folderMode ? !selectedFolders.size : !selectedKeys.size) || bulkBusy}
+              onClick={folderMode ? () => setFolderDeleteOpen(true) : bulkDelete}
               className="h-8 px-2.5 rounded-lg bg-destructive/10 text-destructive border border-destructive/30 text-xs flex items-center gap-1 disabled:opacity-40">
               {bulkBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Delete
             </button>
             <button type="button" onClick={stopSelecting} aria-label="Stop selecting" className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
           </div>
         </div>
+      )}
+      {folderDeleteOpen && (
+        <FolderDeleteDialog
+          folders={[...selectedFolders].filter(isUser).map((name) => ({ name, count: folderFiles(name).length }))}
+          onCancel={() => setFolderDeleteOpen(false)}
+          onKeepFiles={() => deleteSelectedFolders("keep")}
+          onDeleteAll={() => deleteSelectedFolders("all")}
+        />
       )}
       {moveOpen && (
         <MoveDialog count={selectedKeys.size} folders={userFolderNames} onCancel={() => setMoveOpen(false)} onMove={bulkMove} />
