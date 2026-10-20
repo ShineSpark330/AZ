@@ -480,14 +480,14 @@ const HISTORY_SKIP = new Set([
   // out of app surfaces like the history page. Progress/derived rows
   // churn constantly and carry no user-authored substance.
   "GroceryItem", "GroceryFavorite", "GroceryList",
-  "ReminderInstance", "DailyProgress", "MentionLog", "LearningProgress",
+  "ReminderInstance", "DailyProgress", "TaskTick", "MentionLog", "LearningProgress",
 ]);
 const HISTORY_BUCKET_OF = (entityName) => {
   if (["Alter", "Group", "AlterRelationship", "SystemChangeEvent", "InnerWorldLocation",
     "AlterNote", "AlterMessage", "CustomField", "RelationshipType"].includes(entityName)) return "alters";
   if (["JournalEntry", "Bulletin", "BulletinComment", "SupportJournalEntry", "DiaryCard",
     "Poll", "StatusNote", "Note"].includes(entityName)) return "content";
-  if (["Activity", "ActivityCategory", "ActivityGoal", "EmotionCheckIn", "SymptomCheckIn",
+  if (["Activity", "ActivityCategory", "AlterActivityLink", "FeelingLink", "ActivityLinkType", "ActivityGoal", "EmotionCheckIn", "SymptomCheckIn",
     "Symptom", "SymptomSession", "SymptomDefinition", "Sleep", "Location", "SystemCheckIn",
     "Task", "DailyTaskTemplate", "Reminder", "TriggerType", "CustomEmotion",
     "FrontingSession"].includes(entityName)) return "tracking";

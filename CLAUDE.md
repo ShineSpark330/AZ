@@ -807,8 +807,6 @@ See "Critical: Data Backup / Restore Coverage" at top for the ENTITY_NAMES + EXP
   - `PushSubscription` — per-browser push registration.
   - Plus localStorage keys `symphony_native_reminder_log_v1` and `symphony_plan_reminder_log_v1` (native OS notification ids that only mean anything on the installing device).
   Document any new device-bound entity in the comment block above `ENTITY_NAMES`.
-- **"Skip in backups" (v0.257.0).** `src/lib/backupSkip.js` stores `SystemSettings.backup_skip = { keys: ["i:<imageId>", "m:<mediaId>"] }` (same `i:`/`m:` keys the zip exports use). The Assets library toggles it per file and per folder (a folder toggle just marks the files in it at that moment). Marked files are left out of manual JSON exports, every `.zip` export (`exportAllFilesZipParts`) and automatic backups (`buildFullBackupPayload`, filtered AFTER the unread check). It only controls what is COPIED into a backup — never delete or change a file because of it, default is always "include", and new uploads are never auto-skipped.
-- **File types in exports (v0.257.0).** Advanced export has "File types in this backup" (Pictures / Audio / Other files) under Local Files & Assets — it filters `__local_images` by data-URL mime (`filterImagesByKinds`). Videos and attachments live in the files store (`mediaStore`) and only travel in zips; `exportAllFilesZipParts({ kinds })` + the "Back up one type at a time" buttons export one type per zip.
 
 ---
 
@@ -1160,40 +1158,3 @@ If you're dispatching three or more agents and any of them touch shared/release 
 ## RULE ZERO, again — Data Security Is the Final Word
 
 Whatever else this file says, **user data safety wins every trade-off.** If a change could lose, overwrite, corrupt, or expose anyone's data — on any platform, in any version — it does not ship until that risk is gone.
-
-
-
-
-
-## Invariants for v0.255.8+ (Media & Backup Architecture)
-
-### 💾 Backup & Data Preservation (Critical)
-* **Unified Export:** `Everything as one .zip` combined export must always treat data, images, audio, video, and attached files as a single, un-fragmented stream. Do not use multi-part files unless specifically requested via the `Large media backups` settings.
-* **Password Lockdown:** Any unified `.zip` export MUST strictly respect the user's auto-backup password configurations. If locking is active but the key/password is unavailable, immediately throw a fatal write exception—NEVER export raw data unlocked.
-* **Memory-Safe Auto-Backups:** Automated system backups must exclude large assets (images/videos/audio) from runtime heap memory allocations. Fall back to a data-only schema for massive libraries to prevent low-memory crashes.
-
-### 📁 Media Attachments & Assets
-* **Original Quality Invariant:** The framework supports original quality injections for video, audio, and arbitrary files with zero down-sampling or transcoding. 
-* **Dual Destination Storage:** Asset metadata is linked directly inside chat messages, but actual files are stored, managed, and exposed inside the `Assets` system (`Files & videos` directory structure) under their original names and system mime-types.
-* **Destructive Actions:** Deleting an attached file from an asset folder must gracefully degrade the corresponding chat message node to display an explicit "not stored on this device" placeholder.
-
-### 🗓️ Core Logic Updates
-* **Yearly Repeat Schema:** The planner and activity engines now accept an integer bounded sequence under `Repeat` for multi-year tracking (e.g., birthdays/anniversaries up to 100 years).
-* **System Event Reforped:** A `Reformation` event modifies an active profile identity structure seamlessly without spawning a new alter entity or forcing archival actions.
-
-
-
-## Invariants for v0.256.0+ (Unreleased Contacts & Mood Systems)
-
-### 👥 Contacts & Relationships
-* **Destructive Confirmation:** Deleting a note or a relationship entity within Contacts must trigger an explicit confirmation dialogue. Never execute a deletion silently or on a single tap.
-* **Note Mutations:** Contact notes must support inline text editing and retroactive timestamp mutations via their respective pencil icon nodes.
-
-### 🎨 Check-In Log & Custom Mood Vectors
-* **Dynamic Mood Dots:** Notes authored under a specific alter profile must render a relative mood dot condition if an emotion state is present:
-  - Positive = Green
-  - Negative = Red
-  - Neutral = Gray
-  - Mixed / Body States = Orange
-* **Hex Customization Injection:** Custom emotions accept optional user-defined color matrices (explicit selection or `#hex` injection values). 
-* **Fallback Behavior:** If the custom emotion hex string is empty, dynamically cascade down and fall back to the default category color assignment. Render this targeted hex color onto both the picker emotion pill and the corresponding Check-In Log dashboard view.

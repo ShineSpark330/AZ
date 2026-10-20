@@ -7,6 +7,7 @@
 // the web bundle.
 
 import { isNative } from '@/lib/platform';
+import { isCapacitorInternalPath } from '@/lib/safeRoute';
 import { ensureRemindersChannel } from '@/lib/nativeNotifications';
 import {
   backfillFiredWhileClosed,
@@ -57,6 +58,35 @@ function notifyRoute() {
   }
 }
 
+// Notification actions the app itself handles (the running-activity
+// "End & log", the end-of-plan check-in's Done / +15 min / Other…, symptom
+// "End", fronter taps) — usePersistentNotifications owns them. Capacitor
+// hands an action that arrived while nothing was listening (a cold start
+// from the tray) ONLY to the first listener added, which is the one below,
+// so a second listener in the hook never saw it: "Done" from the
+// notification did nothing and the activity stayed running. The single
+// native listener forwards these here; they wait in the queue until the
+// hook (mounted after unlock) takes them.
+const pendingAppActions = [];
+let appActionHandler = null;
+
+export function setAppNotificationActionHandler(fn) {
+  appActionHandler = fn;
+  while (fn && pendingAppActions.length) {
+    const ev = pendingAppActions.shift();
+    try { fn(ev); } catch { /* keep going */ }
+  }
+  return () => { if (appActionHandler === fn) appActionHandler = null; };
+}
+
+function forwardAppAction(event) {
+  if (appActionHandler) {
+    try { appActionHandler(event); } catch { /* non-fatal */ }
+  } else {
+    pendingAppActions.push(event);
+  }
+}
+
 // Trim a Capacitor app URL down to the SPA-relative bit we can hand to
 // react-router. Returns null if the URL isn't ours.
 function extractInAppRoute(rawUrl) {
@@ -66,6 +96,7 @@ function extractInAppRoute(rawUrl) {
     // Only handle URLs that match our Capacitor hostname; ignore mailto:,
     // tel:, or external https links that happen to come through.
     if (u.hostname !== "app.local.oceans-symphony") return null;
+    if (isCapacitorInternalPath(u.pathname)) return null;
     return `${u.pathname || "/"}${u.search || ""}${u.hash || ""}`;
   } catch {
     return null;
@@ -149,6 +180,10 @@ export async function initNativeShell() {
   // Tab (swipeable back to the app). Catches all existing call sites
   // — no need to refactor every <a> in the tree.
   //
+  // Blocked outright: links to Capacitor's internal "/_capacitor_…" helpers
+  // (see safeRoute.js) — opening one as a page could load outside content
+  // with the app's access. Form submissions there are blocked the same way.
+  //
   // Skipped:
   //   - same-origin clicks (in-app react-router navigation)
   //   - non-http protocols (mailto:, tel:, geo:, sms: — let Android
@@ -165,7 +200,10 @@ export async function initNativeShell() {
       let url;
       try { url = new URL(href, window.location.href); }
       catch { return; }
-      if (url.origin === window.location.origin) return;
+      if (url.origin === window.location.origin) {
+        if (isCapacitorInternalPath(url.pathname)) { e.preventDefault(); e.stopPropagation(); }
+        return;
+      }
       if (url.protocol !== "http:" && url.protocol !== "https:") return;
       e.preventDefault();
       try {
@@ -173,6 +211,16 @@ export async function initNativeShell() {
         await Browser.open({ url: url.toString() });
       } catch (err) {
         console.warn("[nativeBootstrap] Browser.open failed:", err?.message || err);
+      }
+    }, true);
+    document.addEventListener("submit", (e) => {
+      const form = e.target;
+      let url;
+      try { url = new URL(form?.getAttribute?.("action") || "", window.location.href); }
+      catch { return; }
+      if (url.origin === window.location.origin && isCapacitorInternalPath(url.pathname)) {
+        e.preventDefault();
+        e.stopPropagation();
       }
     }, true);
   } catch { /* non-fatal */ }
@@ -230,7 +278,7 @@ export async function initNativeShell() {
       // Dashboard's critical-plan card. Doesn't record a
       // ReminderInstance (plans don't share the Reminder entity).
       if (extra.kind === "plan_reminder" && extra.activityId) {
-        pendingNativeRoute.target = `/activities?activityId=${encodeURIComponent(extra.activityId)}`;
+        pendingNativeRoute.target = `/planner?activityId=${encodeURIComponent(extra.activityId)}`;
         notifyRoute();
         return;
       }
@@ -251,7 +299,7 @@ export async function initNativeShell() {
 
       const reminderId = extra.reminderId;
       const scheduledFor = extra.scheduledFor;
-      if (!reminderId) return;
+      if (!reminderId) { forwardAppAction(event); return; }
 
       const actionId = event?.actionId || '';
       if (actionId === 'snooze_10') {

@@ -8,14 +8,15 @@ import { useTerms } from "@/lib/useTerms";
 import { isLocalMode } from "@/lib/storageMode";
 import {
   processUploadedImage, saveLocalImage, createLocalImageUrl,
-  getAllLocalImages, getLocalImageId,
+  listLocalImageMeta, getLocalImageId,
 } from "@/lib/localImageStorage";
+import { assetKind } from "@/lib/assetFiles";
 import { useResolvedAvatarUrl } from "@/hooks/useResolvedAvatarUrl";
 import { FOLDER_MODES, makeFolderUrl } from "@/lib/folderSource";
 
 // Auto-folder names + the user's rules: lib/assetFolders.js (shared with
 // the Assets Library page so both file an image the same way).
-import { resolveAssetRules, autoFolderFor as autoFolderForRules, alterFolderName } from "@/lib/assetFolders";
+import { resolveAssetRules, autoFolderForItem, explicitFolderOf, alterFolderName } from "@/lib/assetFolders";
 import { useReferencedAssets, useImageUsage } from "@/lib/referencedAssets";
 
 function AssetThumb({ item, onSelect }) {
@@ -76,13 +77,12 @@ export default function AssetPickerModal({ open, onClose, onSelect, kind = "imag
   );
   const { data: settingsList = [] } = useQuery({ queryKey: ["systemSettings"], queryFn: () => base44.entities.SystemSettings.list(), enabled: open });
   const rules = useMemo(() => resolveAssetRules(settingsList[0] || null), [settingsList]);
-  const autoFolderFor = (id) => autoFolderForRules(id, rules);
   const referenced = useReferencedAssets(rules, alterNameById);
   const usage = useImageUsage(rules, alterNameById);
   const ownerFolderFor = (asset) =>
     asset?.owner_alter_id && rules.perAlter ? alterFolderName(alterNameById[asset.owner_alter_id] || "Unknown", asset.owner_role, rules) : null;
 
-  const loadImages = async () => { try { setRawImages(await getAllLocalImages()); } catch { setRawImages({}); } };
+  const loadImages = async () => { try { setRawImages(await listLocalImageMeta()); } catch { setRawImages({}); } };
   useEffect(() => { if (open) loadImages(); }, [open]);
 
   const assetByImageId = useMemo(() => {
@@ -96,25 +96,30 @@ export default function AssetPickerModal({ open, onClose, onSelect, kind = "imag
     const out = [];
     for (const id of Object.keys(rawImages)) {
       const asset = assetByImageId[id];
-      const data = rawImages[id];
+      const meta = rawImages[id];
+      // Only pictures (or songs, for the audio picker) — videos and other
+      // files share the store but can't be an avatar or a background.
+      const kind = assetKind({ asset, meta, id });
+      if (kind === "video" || kind === "file") continue;
       out.push({
         key: id,
         url: `/local-image/${encodeURIComponent(id)}`,
         name: asset?.name || usage[id]?.name || id,
-        folder: ownerFolderFor(asset) || (asset?.folder || "").trim() || usage[id]?.folder || autoFolderFor(id),
-        isGif: !!asset?.is_gif || (typeof data === "string" && data.startsWith("data:image/gif")),
-        isAudio: asset?.kind === "audio" || id.startsWith("song-")
-          || (typeof data === "string" && data.startsWith("data:audio")),
+        folder: ownerFolderFor(asset) || explicitFolderOf(asset, id, rules) || usage[id]?.folder || autoFolderForItem(id, kind, rules),
+        isGif: !!asset?.is_gif || meta?.mime === "image/gif",
+        isAudio: kind === "audio",
       });
     }
     for (const a of assets) {
       const lid = a.image_url ? getLocalImageId(a.image_url) : null;
       if (lid && rawImages[lid] !== undefined) continue;
+      if (a.kind === "video" || a.kind === "file") continue;
       out.push({
         key: `asset-${a.id}`, url: a.image_url,
         name: a.name || "Image",
         folder: ownerFolderFor(a) || (a.folder || "").trim() || "Library uploads",
         isGif: !!a.is_gif,
+        isAudio: a.kind === "audio",
       });
     }
     const known = new Set(out.map((i) => i.url));

@@ -129,9 +129,15 @@ export default function ContactProfile() {
     } catch (err) { toast.error(err?.message || "Couldn't delete note"); }
   };
 
-  const saveNote = async (noteId, content, timestamp) => {
+  const saveNote = async (noteId, text, timestamp) => {
+    let prepared;
     try {
-      await base44.entities.ContactNote.update(noteId, { content, timestamp });
+      prepared = await prepareAuthoredText(text, { alters, terms, surfaceLabel: "contact note", chips: false });
+    } catch (e) { if (isLogCommandError(e)) { toast.error(e.message); return false; } throw e; }
+    if (prepared === null) return false; // user backed out of the whisper warning
+    try {
+      await base44.entities.ContactNote.update(noteId, { content: prepared.content, author_alter_ids: prepared.authorIds, timestamp });
+      await recordAuthoredText({ ...prepared, alters, sourceType: "contact", sourceId: noteId, sourceLabel: "Contact note", navigatePath: `/contacts/${id}` });
       queryClient.invalidateQueries({ queryKey: ["contactNotes", id] });
       toast.success("Note updated");
       return true;
@@ -295,7 +301,7 @@ export default function ContactProfile() {
           ) : (
             <div className="space-y-2">
               {sortedNotes.map((n) => (
-                <NoteRow key={n.id} note={n} onDelete={deleteNote} onSave={saveNote} />
+                <NoteRow key={n.id} note={n} alters={alters} onDelete={deleteNote} onSave={saveNote} />
               ))}
             </div>
           )}
@@ -332,7 +338,7 @@ function toLocalInput(iso) {
 }
 
 // One contact note: view, or edit text + date/time in place.
-function NoteRow({ note, onDelete, onSave }) {
+function NoteRow({ note, alters, onDelete, onSave }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(note.content || "");
   const [when, setWhen] = useState(toLocalInput(note.timestamp));
@@ -353,7 +359,7 @@ function NoteRow({ note, onDelete, onSave }) {
   if (editing) {
     return (
       <div className="rounded-lg border border-primary/40 bg-card p-2.5 space-y-2">
-        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} autoFocus
+        <MentionTextarea value={text} onChange={setText} alters={alters} signposts rows={3} autoFocus
           className="w-full bg-background border border-input rounded-lg px-2.5 py-1.5 text-sm resize-y outline-none" />
         <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)}
           aria-label="Note date and time"

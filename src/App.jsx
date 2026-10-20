@@ -33,7 +33,6 @@ const GroupProfile = lazy(() => import('@/pages/GroupProfile'));
 const LocationProfile = lazy(() => import('@/pages/LocationProfile'));
 const AssetsLibrary = lazy(() => import('@/pages/AssetsLibrary'));
 const SystemCheckIn = lazy(() => import('@/pages/SystemCheckIn'));
-const ActivityTracker = lazy(() => import('@/pages/ActivityTracker'));
 const SleepTracker = lazy(() => import('@/pages/SleepTracker'));
 const ToDoList = lazy(() => import('@/pages/ToDoList'));
 const Timeline = lazy(() => import('@/pages/Timeline'));
@@ -57,6 +56,11 @@ const HistoryArchive = lazy(() => import('@/pages/HistoryArchive'));
 const LocationHistory = lazy(() => import('@/pages/LocationHistory'));
 const FriendsPage = lazy(() => import('@/pages/Friends'));
 const PlannerPage = lazy(() => import('@/pages/Planner'));
+const GoalsPage = lazy(() => import('@/pages/Goals'));
+const NeedsPage = lazy(() => import('@/pages/Needs'));
+const ActivitiesPage = lazy(() => import('@/pages/Activities'));
+const ModsPage = lazy(() => import('@/pages/Mods'));
+const ModPage = lazy(() => import('@/pages/ModPage'));
 
 
 import { setEncryptionEnabled, setEncSalt, getSessionPassword, clearSessionPassword } from '@/lib/storageMode';
@@ -97,6 +101,7 @@ import { useNativeQuickActionsSync } from '@/lib/nativeQuickActions';
 import { useFriendsFrontChangeNotifications } from '@/lib/useFriendsFrontNotifications';
 import { useNavigate, useLocation } from 'react-router-dom';
 import ErrorBoundary from '@/components/shared/ErrorBoundary';
+import ExperimentalGate from '@/components/shared/ExperimentalGate';
 import { recordCrash } from '@/lib/lastCrash';
 import { restorePreviewIfActive, isPreviewActive } from '@/lib/previewMode';
 import { cleanupBrokenSessionsOnce } from '@/lib/frontingUtils';
@@ -259,7 +264,9 @@ const AuthenticatedApp = () => {
         <Route path="/location/:id" element={<LocationProfile />} />
         <Route path="/assets" element={<AssetsLibrary />} />
         <Route path="/system-checkin" element={<SystemCheckIn />} />
-        <Route path="/activities" element={<ActivityTracker />} />
+        {/* Managing activities. Logging/planning is the Planner; old
+            entry links (?activityId= etc.) are forwarded there. */}
+        <Route path="/activities" element={<ActivitiesPage />} />
         <Route path="/sleep" element={<SleepTracker />} />
         <Route path="/timeline" element={<Timeline />} />
         <Route path="/system-map" element={<SystemMapPage />} />
@@ -283,6 +290,11 @@ const AuthenticatedApp = () => {
         <Route path="/friends" element={<FriendsPage />} />
         {/* New planner — lives alongside the old tracker until it replaces it. */}
         <Route path="/planner" element={<PlannerPage />} />
+        <Route path="/goals" element={<ExperimentalGate name="Goals"><GoalsPage /></ExperimentalGate>} />
+        <Route path="/needs" element={<ExperimentalGate name="Needs"><NeedsPage /></ExperimentalGate>} />
+        {/* Mods other people made (docs/mods.md). Each mod page runs in a sandboxed frame. */}
+        <Route path="/mods" element={<ExperimentalGate name="Mods"><ModsPage /></ExperimentalGate>} />
+        <Route path="/mod/:modId/:pageId" element={<ExperimentalGate name="Mods"><ModPage /></ExperimentalGate>} />
       </Route>
       <Route path="*" element={<PageNotFound />} />
       </Routes>

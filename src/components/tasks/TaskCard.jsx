@@ -1,14 +1,21 @@
 import React from "react";
 import { Check } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { followTaskNavPath } from "@/lib/dailyTaskSystem";
+import { openDailyTask, isDailyTaskOpenable } from "@/lib/dailyTaskActivity";
+import { taskCountConfig, taskCountState, countLabel } from "@/lib/taskCounts";
+import { TaskCounter, TaskStepList, useTaskTicks } from "@/components/tasks/TaskCountControls";
 
 export default function TaskCard({ task, completed, onToggle }) {
   const navigate = useNavigate();
 
-  const handleCardClick = () => followTaskNavPath(task.nav_path, navigate);
+  // Opens the task's link, or asks to begin its activity (openDailyTask).
+  const handleCardClick = () => openDailyTask(task, navigate);
 
-  const isClickable = !!task.nav_path;
+  const isClickable = isDailyTaskOpenable(task);
+  // Counted tasks (target / tally / steps) get a counter or a checklist
+  // instead of the on/off switch.
+  const countMode = taskCountConfig(task).mode;
+  const ticks = useTaskTicks();
 
   return (
     <div
@@ -35,9 +42,16 @@ export default function TaskCard({ task, completed, onToggle }) {
           {task.description && (
             <p className="text-xs text-muted-foreground leading-relaxed">{task.description}</p>
           )}
+          {countMode === "steps" && <TaskStepList task={task} ticks={ticks} />}
         </div>
 
-        {task.mode === "MANUAL" ? (
+        {countMode === "target" || countMode === "tally" ? (
+          <TaskCounter task={task} ticks={ticks} />
+        ) : countMode === "steps" ? (
+          <span className={`text-xs font-semibold flex-shrink-0 ${completed ? "text-primary" : "text-muted-foreground"}`}>
+            {completed ? <span className="flex items-center gap-1"><Check className="w-3.5 h-3.5" /> Done</span> : countLabel(taskCountState(task, ticks))}
+          </span>
+        ) : task.mode === "MANUAL" ? (
           <button
             type="button"
             role="switch"

@@ -1,4 +1,4 @@
-// Backup-file privacy controls — the ONE place these two knobs are edited,
+// Backup-file privacy controls — the ONE place these knobs are edited,
 // mounted inside Settings → Auto-backup and inside the first-run backup
 // decision step so the two can't drift.
 //
@@ -9,6 +9,8 @@
 //      everyone else can set a separate one.
 //   2. File name. The default names the app; a plain name doesn't. Restore
 //      goes by file content, so any name imports.
+//   3. An off-device copy (BackupCopyOptions) — Drive, an SD card, a cloud
+//      folder on desktop — so a lost device doesn't take the backup with it.
 //
 // Both default to off/standard — nothing about existing files changes until
 // the user opts in. The custom password lives in localStorage and is NOT
@@ -20,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { isEncryptionEnabled } from "@/lib/storageMode";
 import { isNative } from "@/lib/platform";
+import BackupCopyOptions from "./BackupCopyOptions";
 import {
   BACKUP_ENCRYPTION,
   getBackupEncryptionMode,
@@ -58,9 +61,11 @@ function OptionCard({ active, onClick, icon: Icon, title, body, children }) {
   );
 }
 
+// `showCopy` false: the parent shows the off-device copy itself (Settings →
+// Auto-backup puts it with the other "where" choices).
 // `onChange` fires after any persisted change so a parent can refresh
 // derived labels (e.g. the destination folder in Settings).
-export default function BackupFileOptions({ onChange }) {
+export default function BackupFileOptions({ onChange, showCopy = true }) {
   const encryptedStorage = isEncryptionEnabled();
   const [encMode, setEncModeState] = useState(BACKUP_ENCRYPTION.OFF);
   const [hasCustomPw, setHasCustomPw] = useState(false);
@@ -231,6 +236,8 @@ export default function BackupFileOptions({ onChange }) {
             : " in Downloads → Oceans Symphony.")}
         </p>
       </div>
+
+      {showCopy && <BackupCopyOptions onChange={notify} />}
     </div>
   );
 }

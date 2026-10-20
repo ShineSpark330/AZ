@@ -24,6 +24,9 @@ const KEY = "symphony_active_activities_v1";
 // Pre-multi single-session key (one object). Migrated into the array on read.
 const LEGACY_KEY = "symphony_active_activity_v1";
 export const ACTIVE_ACTIVITY_EVENT = "active-activity-changed";
+// Fired once when a NEW session starts (not when an already-running plan
+// is returned). The Needs check-in note listens for it.
+export const ACTIVITY_STARTED_EVENT = "activity-session-started";
 
 function genId() {
   try {
@@ -97,17 +100,26 @@ function endNativeIdFor(sessionId) {
 
 const endWebTimers = new Map();
 
-async function scheduleActiveEndReminder(session) {
+// The check-in carries three buttons (Android shows at most three): done
+// on time, keep going 15 more minutes, or open the app's outcome sheet
+// for anything else (stopped early, skipped, reschedule). Tapping the
+// notification itself opens that sheet too. Handled in
+// usePersistentNotifications; registered in persistentNotifications.
+export const ACTIVE_END_ACTION_TYPE_ID = "ACTIVE_END_ACTIONS";
+export const ACTIVE_END_SNOOZE_MINUTES = 15;
+
+// `atMs` (optional) moves the check-in later — "keep going" re-arms it.
+async function scheduleActiveEndReminder(session, { atMs = null } = {}) {
   try {
     if (!readActiveEndReminderEnabled() || !session?.planActivityId) return;
     const rows = await base44.entities.Activity.filter({ id: session.planActivityId });
     const plan = rows?.[0];
-    const endMs = plannedEndMsFor(session, plan);
+    const endMs = atMs || plannedEndMsFor(session, plan);
     if (!endMs || endMs <= Date.now()) return;
     const name = plan?.activity_name || session.name || "Activity";
     const timeLabel = new Date(endMs).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    const title = `${name} was scheduled to end at ${timeLabel}`;
-    const body = "Still going? End it when you're done — it keeps running until you do.";
+    const title = atMs ? `Checking in on ${name}` : `${name} was scheduled to end at ${timeLabel}`;
+    const body = "Is it done, still going, or did something change?";
     if (isNative()) {
       const { isNativeNotificationsEnabled, ensureRemindersChannel, REMINDERS_CHANNEL_ID } = await import("@/lib/nativeNotifications");
       if (!(await isNativeNotificationsEnabled())) return;
@@ -122,6 +134,7 @@ async function scheduleActiveEndReminder(session) {
           channelId: REMINDERS_CHANNEL_ID,
           largeIcon: "ic_notif_large",
           schedule: { at: new Date(endMs), allowWhileIdle: true },
+          actionTypeId: ACTIVE_END_ACTION_TYPE_ID,
           extra: { kind: "active_end_checkin", sessionId: session.id, activityId: session.planActivityId },
         }],
       });
@@ -134,7 +147,18 @@ async function scheduleActiveEndReminder(session) {
     endWebTimers.set(session.id, setTimeout(() => {
       endWebTimers.delete(session.id);
       if (!getActiveActivities().some((a) => a.id === session.id)) return; // already ended
-      toast(title, { description: body, duration: 12000 });
+      toast(title, {
+        description: body,
+        duration: 20000,
+        action: {
+          label: "Resolve",
+          onClick: () => import("@/lib/planner/resolvePlan").then((m) => m.requestPlanResolve(session.planActivityId)),
+        },
+        cancel: {
+          label: `+${ACTIVE_END_SNOOZE_MINUTES} min`,
+          onClick: () => snoozeActiveEndReminder(session.id),
+        },
+      });
       try {
         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
           new Notification(title, { body });
@@ -155,16 +179,33 @@ async function cancelActiveEndReminder(session) {
   } catch { /* non-fatal */ }
 }
 
+// "Keep going": ask again in a few minutes. The session itself is
+// untouched — it keeps running until it's resolved.
+export async function snoozeActiveEndReminder(sessionId, minutes = ACTIVE_END_SNOOZE_MINUTES) {
+  const session = getActiveActivities().find((a) => a.id === sessionId);
+  if (!session) return false;
+  await cancelActiveEndReminder(session);
+  await scheduleActiveEndReminder(session, { atMs: Date.now() + minutes * 60000 });
+  return true;
+}
+
 // Start a new running session. Returns the stored item (with its id).
 // Stamped with the OWNING system: the store is device-wide localStorage
 // (unlike the per-system DB blobs), so without the stamp a session started
 // in one system reads as everyone's (owner report — surfaces label it).
+// A plan that's already running isn't started twice: the running session
+// is returned instead.
 export function addActiveActivity(obj) {
+  if (obj?.planActivityId) {
+    const running = getActiveActivities().find((a) => a.planActivityId === obj.planActivityId);
+    if (running) return running;
+  }
   let systemId = null, systemName = null;
   try { systemId = getActiveSystemId() || null; systemName = getActiveSystem()?.name || null; } catch { /* registry not up yet */ }
   const item = { id: genId(), systemId, systemName, ...obj };
   writeArr([item, ...getActiveActivities()]);
   scheduleActiveEndReminder(item);
+  try { window.dispatchEvent(new CustomEvent(ACTIVITY_STARTED_EVENT, { detail: item })); } catch { /* no window */ }
   return item;
 }
 
@@ -172,6 +213,41 @@ export function removeActiveActivity(id) {
   const gone = getActiveActivities().find((a) => a.id === id);
   if (gone) cancelActiveEndReminder(gone);
   writeArr(getActiveActivities().filter((a) => a.id !== id));
+}
+
+// A plan only ever runs once at a time. Older builds could start the same
+// plan more than once (a double tap, a retry after a notification action
+// was lost), and ending one copy left the others running. Ending, pausing
+// or resolving a plan clears every copy.
+export function removeOtherSessionsForPlan(planActivityId) {
+  if (!planActivityId) return;
+  for (const a of getActiveActivities()) {
+    if (a.planActivityId === planActivityId) removeActiveActivity(a.id);
+  }
+}
+
+// The running session for a plan, if there is one.
+export function sessionForPlan(planActivityId) {
+  if (!planActivityId) return null;
+  return getActiveActivities().find((a) => a.planActivityId === planActivityId) || null;
+}
+
+// The running session started from a daily task, if there is one. Sessions
+// started before they carried `dailyTaskTemplateId` are matched through
+// their plan record.
+export async function sessionForDailyTask(templateId) {
+  if (!templateId) return null;
+  const withPlan = getActiveActivities().filter((a) => a.planActivityId);
+  const direct = withPlan.find((a) => a.dailyTaskTemplateId === templateId);
+  if (direct) return direct;
+  for (const a of withPlan) {
+    if (a.dailyTaskTemplateId) continue;
+    try {
+      const plan = (await base44.entities.Activity.filter({ id: a.planActivityId }))?.[0];
+      if (plan?.daily_task_template_id === templateId && plan.status !== ACTIVITY_STATUSES.DONE) return a;
+    } catch { /* not this one */ }
+  }
+  return null;
 }
 
 export function updateActiveActivity(id, patch) {
@@ -218,6 +294,13 @@ export async function endAndLogActiveActivity(id, endTimeIso) {
       contact_ids: contactIds,
       notes: noteVal,
     });
+    // Started from a daily task → finishing it ticks that task.
+    try {
+      const { markDailyTaskDoneFor } = await import("@/lib/dailyTaskActivity");
+      await markDailyTaskDoneFor(record);
+      const { markWishHappenedFor } = await import("@/lib/wishes");
+      await markWishHappenedFor(record);
+    } catch { /* non-fatal */ }
     // The plan happened — clear any pending pre-start OS reminder for it.
     try {
       const { cancelPlanReminder } = await import("@/lib/planReminderScheduler");
@@ -238,6 +321,7 @@ export async function endAndLogActiveActivity(id, endTimeIso) {
     });
   }
   removeActiveActivity(active.id);
+  if (active.planActivityId) removeOtherSessionsForPlan(active.planActivityId);
   const total = Number(record?.actual_duration_minutes) || minutes;
   return { record, minutes: total, name: active.name || "Activity", resolvedPlan: !!active.planActivityId };
 }
@@ -261,5 +345,6 @@ export async function pauseActiveActivity(id) {
   } catch { /* start from this session alone */ }
   await base44.entities.Activity.update(active.planActivityId, { progress_minutes: banked + minutes });
   removeActiveActivity(active.id);
+  removeOtherSessionsForPlan(active.planActivityId);
   return { minutes, total: banked + minutes, name: active.name || "Activity", paused: true };
 }

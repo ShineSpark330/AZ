@@ -1,19 +1,22 @@
 import React, { useState } from "react";
+import { Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Archive, RotateCcw, Loader2 } from "lucide-react";
+import { contactDisplayName } from "@/lib/contacts";
 
-// Settings → Voice setup → "Archived Contacts".
-// Archiving a contact hides it from the Contacts list without deleting it. This
-// is where those hidden contacts live — Restore puts one straight back.
+// Archived contacts are hidden from the Contacts list, so this is the one
+// place to find them again. Mirrors ArchivedAltersManager: list every
+// archived contact with a Restore button that flips is_archived back off.
+// Restoring only clears the flag — the record itself is never touched
+// otherwise, and nothing here deletes anything.
 export default function ArchivedContactsManager() {
   const queryClient = useQueryClient();
   const [restoring, setRestoring] = useState(null);
 
-  // Same query key the Contacts page uses, so restoring here updates that list too.
   const { data: contacts = [] } = useQuery({
     queryKey: ["contacts"],
     queryFn: () => base44.entities.Contact.list(),
@@ -21,76 +24,66 @@ export default function ArchivedContactsManager() {
 
   const archived = contacts
     .filter((c) => c.is_archived)
-    .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    .sort((a, b) => contactDisplayName(a).localeCompare(contactDisplayName(b)));
 
   const restoreMutation = useMutation({
     mutationFn: (id) => base44.entities.Contact.update(id, { is_archived: false }),
-    onSuccess: () => {
+    onSuccess: (_r, id) => {
       queryClient.invalidateQueries({ queryKey: ["contacts"] });
-      toast.success("Contact restored");
+      const c = contacts.find((x) => x.id === id);
+      toast.success(`${contactDisplayName(c)} is back in your contacts`);
     },
     onError: (err) => toast.error(err?.message || "Couldn't restore that contact"),
     onSettled: () => setRestoring(null),
   });
 
-  const header = (
-    <CardHeader>
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
-          <Archive className="w-5 h-5 text-muted-foreground" />
-        </div>
-        <div>
-          <CardTitle className="text-lg">Archived Contacts</CardTitle>
-          <CardDescription>Manage archived contacts</CardDescription>
-        </div>
-      </div>
-    </CardHeader>
-  );
-
-  if (archived.length === 0) {
-    return (
-      <Card className="border-border/50">
-        {header}
-        <CardContent>
-          <p className="text-sm text-muted-foreground">No archived contacts</p>
-        </CardContent>
-      </Card>
-    );
-  }
-
   return (
-    <Card className="border-border/50">
-      {header}
-      <CardContent>
-        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-          {archived.map((contact) => (
-            <div key={contact.id} className="flex items-center justify-between gap-3 p-3 bg-muted/30 rounded-lg">
-              <div className="min-w-0">
-                <p className="text-sm font-medium truncate">{contact.name}</p>
-                {contact.relationship_label && (
-                  <p className="text-xs text-muted-foreground truncate">{contact.relationship_label}</p>
-                )}
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="flex-shrink-0"
-                onClick={() => {
-                  setRestoring(contact.id);
-                  restoreMutation.mutate(contact.id);
-                }}
-                disabled={restoring === contact.id}
-              >
-                {restoring === contact.id ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <RotateCcw className="w-4 h-4 mr-2" />
-                )}
-                {restoring === contact.id ? "Restoring..." : "Restore"}
-              </Button>
-            </div>
-          ))}
+    <Card className="border-border/50" data-testid="archived-contacts">
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 shrink-0 rounded-xl bg-muted flex items-center justify-center">
+            <Archive className="w-5 h-5 text-muted-foreground" />
+          </div>
+          <div>
+            <CardTitle className="text-lg">Archived contacts</CardTitle>
+            <CardDescription>Archived contacts are hidden from your Contacts list. Restore one to put it straight back.</CardDescription>
+          </div>
         </div>
+      </CardHeader>
+      <CardContent>
+        {archived.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No archived contacts</p>
+        ) : (
+          <div className="space-y-2 max-h-64 overflow-y-auto overscroll-contain pr-1">
+            {archived.map((c) => (
+              <div key={c.id} className="flex items-center justify-between gap-2 p-3 bg-muted/30 rounded-lg">
+                <Link to={`/contacts/${c.id}`} className="min-w-0 hover:underline">
+                  <p className="text-sm font-medium truncate">{contactDisplayName(c)}</p>
+                  {c.nickname && c.name && c.nickname.trim() !== c.name.trim() && (
+                    <p className="text-xs text-muted-foreground truncate">{c.name}</p>
+                  )}
+                </Link>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => {
+                    setRestoring(c.id);
+                    restoreMutation.mutate(c.id);
+                  }}
+                  disabled={restoring === c.id}
+                >
+                  {restoring === c.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RotateCcw className="w-4 h-4 mr-2" />
+                  )}
+                  {restoring === c.id ? "Restoring..." : "Restore"}
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

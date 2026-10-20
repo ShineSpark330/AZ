@@ -61,8 +61,8 @@ function useComposerLift(kb) {
 import { parseAndStripSignposts, foldSignpostAuthors, SYSTEM_SENTINEL_ID } from "@/lib/signpostAuthors";
 import { saveLocalImage, createLocalImageUrl, blobToDataUrl } from "@/lib/localImageStorage";
 import AttachFileDialog from "@/components/shared/AttachFileDialog";
-import { saveMedia, mediaPlaceholderHtml, formatBytes } from "@/lib/mediaStore";
-import { saveBlobToDeviceFolder, describeSaveResult } from "@/lib/saveToDevice";
+import { mediaPlaceholderHtml, formatBytes, saveAssetToDevice } from "@/lib/assetFiles";
+import { base44 } from "@/api/base44Client";
 import { isLocalMode } from "@/lib/storageMode";
 
 // ── Shared System-Chat surface ───────────────────────────────────────────────
@@ -502,6 +502,11 @@ export function Composer({ channelLabel, alters, speakerAlters = alters, default
     e.target.value = "";
     if (file) setPendingFile(file);
   };
+  const saveCopyToDevice = async (url, { name, mime, kind }) => {
+    const res = await saveAssetToDevice({ url, name: (name || "").replace(/\.[^.]+$/, ""), mime, kind, originalName: name });
+    if (res.ok) toast.success(res.location ? `Copy saved to ${res.location}` : "Copy saved to device");
+    else if (res.error !== "cancelled") toast.error("Couldn't save a copy to the device.");
+  };
   const handleAttachConfirm = async ({ kind, blob, file, saveCopy, name }) => {
     setPendingFile(null);
     setUploadingImage(true);
@@ -519,15 +524,25 @@ export function Composer({ channelLabel, alters, speakerAlters = alters, default
         }
         setPendingImage(url);
         toast.success(isGif ? "GIF added!" : "Image added!");
+        if (saveCopy) await saveCopyToDevice(url, { name: name || file.name, mime: blob.type || file.type, kind });
       } else {
-        const meta = await saveMedia(file);
-        insertHtml(mediaPlaceholderHtml(meta), "");
-        toast.success(`${meta.kind === "video" ? "Video" : meta.kind === "audio" ? "Audio" : "File"} attached (${formatBytes(meta.size)}, original quality).`);
-      }
-      if (saveCopy) {
-        const res = await saveBlobToDeviceFolder({ blob, filename: name || file.name, mime: blob.type || file.type, kind });
-        const msg = describeSaveResult(res, name || file.name);
-        if (msg) (msg.type === "error" ? toast.error : toast.success)(msg.text);
+        // Videos, audio and other files go in the same local file store as
+        // pictures (it rides backups and the app's private-file copy), with
+        // an Assets record so they show up in the library.
+        if (!isLocalMode()) { toast.error("Files can only be stored on this device in local mode."); return; }
+        const id = `file-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const mime = blob.type || file.type || "";
+        await saveLocalImage(id, blob, mime || undefined);
+        const url = createLocalImageUrl(id);
+        const display = (file.name || "File").replace(/\.[^.]+$/, "").slice(0, 80) || "File";
+        await base44.entities.ImageAsset.create({
+          name: display, image_url: url, folder: "",
+          kind, mime, file_name: file.name, size: blob.size,
+          is_gif: false, created_date: new Date().toISOString(),
+        });
+        insertHtml(mediaPlaceholderHtml({ id, kind, name: file.name || display, size: blob.size }), "");
+        toast.success(`${kind === "video" ? "Video" : kind === "audio" ? "Audio" : "File"} attached (${formatBytes(blob.size)}, original quality).`);
+        if (saveCopy) await saveCopyToDevice(url, { name: file.name, mime, kind });
       }
     } catch (err) {
       toast.error(err?.message || "Couldn't add that file.");

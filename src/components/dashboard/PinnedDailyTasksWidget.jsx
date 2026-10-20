@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { openDailyTask, isDailyTaskOpenable } from "@/lib/dailyTaskActivity";
+import { isCountedTask } from "@/lib/taskCounts";
+import { TaskCountChip, useTaskTicks } from "@/components/tasks/TaskCountControls";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { useTerms } from "@/lib/useTerms";
@@ -65,6 +68,7 @@ export default function PinnedDailyTasksWidget() {
     staleTime: 0,
     refetchOnMount: "always",
   });
+  const ticks = useTaskTicks();
 
   // Build a per-frequency map of (period_key -> Set(completed_task_ids))
   // limited to the CURRENT period for each frequency. That's the only
@@ -223,6 +227,7 @@ export default function PinnedDailyTasksWidget() {
               template={t}
               done={isDone(t)}
               terms={terms}
+              ticks={ticks}
               onToggle={() => toggleManualDone(t)}
             />
           ))}
@@ -239,22 +244,27 @@ export default function PinnedDailyTasksWidget() {
   );
 }
 
-function TaskRow({ template, done, terms, onToggle }) {
+function TaskRow({ template, done, terms, ticks, onToggle }) {
   const navigate = useNavigate();
   const f = template.frequency || "daily";
   const isAuto = template.mode === "AUTO";
+  // Counted tasks (several times / tally / steps) tick themselves off from
+  // their count — the chip adds one; the circle just shows done.
+  const counted = isCountedTask(template);
   const Icon = done ? CheckCircle2 : Circle;
   // Tapping a row jumps to the task's associated page — same as
   // clicking it on the Daily Tasks page (TaskCard navigates to
   // task.nav_path). AUTO tasks without an explicit nav_path fall back
   // to the Daily Tasks page so the auto state can be refreshed there.
+  // A task with an activity asks to begin it first (openDailyTask).
   const navPath = template.nav_path || (isAuto ? "/tasks" : null);
-  const goToPage = () => followTaskNavPath(navPath, navigate);
+  const opens = !!navPath || isDailyTaskOpenable(template);
+  const goToPage = () => (isDailyTaskOpenable(template) ? openDailyTask(template, navigate) : followTaskNavPath(navPath, navigate));
   return (
     <div
-      onClick={navPath ? goToPage : undefined}
-      role={navPath ? "link" : undefined}
-      className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border transition-colors ${navPath ? "cursor-pointer" : ""} ${
+      onClick={opens ? goToPage : undefined}
+      role={opens ? "link" : undefined}
+      className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border transition-colors ${opens ? "cursor-pointer" : ""} ${
         done
           ? "border-border/30 bg-muted/20 opacity-60"
           : "border-border/50 bg-card hover:bg-muted/20"
@@ -263,9 +273,9 @@ function TaskRow({ template, done, terms, onToggle }) {
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); onToggle(); }}
-        disabled={isAuto}
+        disabled={isAuto || counted}
         aria-label={done ? "Mark not done" : "Mark done"}
-        className={`flex-shrink-0 ${isAuto ? "cursor-default" : "cursor-pointer text-muted-foreground hover:text-primary"} ${
+        className={`flex-shrink-0 ${isAuto || counted ? "cursor-default" : "cursor-pointer text-muted-foreground hover:text-primary"} ${
           done ? "text-green-500" : ""
         }`}
         title={isAuto ? "This task is auto-completed — open its page to do it" : undefined}
@@ -277,6 +287,9 @@ function TaskRow({ template, done, terms, onToggle }) {
           {applyTerms(template.title, terms)}
         </p>
       </div>
+      {counted && (
+        <TaskCountChip task={{ ...template, title: applyTerms(template.title, terms) }} ticks={ticks} />
+      )}
       <span className={`flex-shrink-0 text-[0.65rem] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded border ${FREQ_BADGE_CLASS[f] || FREQ_BADGE_CLASS.daily}`}>
         {FREQUENCY_LABELS?.[f] || f}
       </span>

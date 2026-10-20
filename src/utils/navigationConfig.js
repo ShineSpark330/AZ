@@ -1,4 +1,5 @@
-import { Home, Users, Sparkles, BookOpen, CheckSquare, Clock, FileText, GitFork, BarChart2, Zap, Activity, Heart, Users2, Settings, Shield, Vote, Bell, GitMerge, MapPin, ClipboardList, UserRound, Pin, MessageSquare, Images, Contact, CalendarRange , History } from "lucide-react";
+import { Home, Users, Sparkles, BookOpen, CheckSquare, Clock, FileText, GitFork, BarChart2, Zap, Activity, Heart, Users2, Settings, Shield, Vote, Bell, GitMerge, MapPin, ClipboardList, UserRound, Pin, MessageSquare, Images, Contact, CalendarRange , History, Puzzle, Target, HeartHandshake } from "lucide-react";
+import { EXPERIMENTAL_PAGE_IDS, experimentalOn, subscribeExperimental } from "@/lib/experimentalFeatures";
 
 export const ALL_PAGES = [
   { id: "home", label: "Home", path: "/", icon: Home },
@@ -25,6 +26,8 @@ export const ALL_PAGES = [
   { id: "history-archive", label: "Recent Changes", path: "/history", icon: History },
   { id: "friends", label: "Friends", path: "/friends", icon: UserRound },
   { id: "planner", label: "Planner", path: "/planner", icon: CalendarRange },
+  { id: "goals", label: "Goals", path: "/goals", icon: Target },
+  { id: "needs", label: "Needs", path: "/needs", icon: HeartHandshake },
   { id: "contacts", label: "Contacts", path: "/contacts", icon: Contact },
   { id: "bulletins", label: "Bulletin Board", path: "/bulletins", icon: Pin },
   { id: "unblend", label: "Help me unblend", path: "/unblend", icon: Heart },
@@ -32,7 +35,29 @@ export const ALL_PAGES = [
   { id: "chat", label: "System Chat", path: "/chat", icon: MessageSquare },
   { id: "assets", label: "Assets", path: "/assets", icon: Images },
   { id: "presences", label: "New Presences", path: "/presences", icon: Sparkles },
+  { id: "mods", label: "Mods", path: "/mods", icon: Puzzle },
+  // Pages of switched-on mods are appended at runtime (isMod: true) by
+  // src/lib/mods/registry.js, so they can be pinned like any other page.
 ];
+
+// Experimental pages (src/lib/experimentalFeatures.js) leave ALL_PAGES while
+// the switch is off and go back to their own spots when it's turned on, so
+// every surface that reads ALL_PAGES follows without its own check. Saved
+// navigation configs keep their ids either way.
+const EXPERIMENTAL_BUILTINS = ALL_PAGES
+  .map((page, index) => ({ page, index }))
+  .filter(({ page }) => EXPERIMENTAL_PAGE_IDS.includes(page.id));
+
+function syncExperimentalPages() {
+  const on = experimentalOn();
+  for (const { page, index } of EXPERIMENTAL_BUILTINS) {
+    const at = ALL_PAGES.indexOf(page);
+    if (!on && at !== -1) ALL_PAGES.splice(at, 1);
+    if (on && at === -1) ALL_PAGES.splice(Math.min(index, ALL_PAGES.length), 0, page);
+  }
+}
+syncExperimentalPages();
+subscribeExperimental(syncExperimentalPages);
 
 export const DEFAULT_CONFIG = {
   topBar: ["home", "alters", "checkin", "journals", "tasks"],
@@ -52,6 +77,8 @@ export const DEFAULT_CONFIG = {
     "journals",
     "tasks",
     "todo",
+    "goals",
+    "needs",
     "checkin-log",
     "unblend",
     "get-to-know-me",
@@ -72,6 +99,7 @@ export const DEFAULT_CONFIG = {
     "contacts",
     "reminders",
     "friends",
+    "mods",
     "settings",
   ],
   // `bulletins` defaults to removed because the dashboard's own

@@ -1,8 +1,7 @@
 import React, { useState } from "react";
 import { SlidersHorizontal, Link2, Unlink2, RotateCcw } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
-import {
-  useMediaTuning, formatTempo, formatSemitones,
+import { formatTempo, formatSemitones,
   TEMPO_MIN, TEMPO_MAX, TEMPO_STEP, PITCH_MIN, PITCH_MAX, PITCH_STEP,
 } from "@/lib/mediaTuning";
 

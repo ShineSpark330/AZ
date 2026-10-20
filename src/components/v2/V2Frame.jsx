@@ -16,8 +16,7 @@
 // CUSTOMIZATION: nothing visual is hardcoded — sizes/colors read --v2-*
 // tokens from uiV2.js, edited live in Display options.
 
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { syllableSplit } from "@/lib/syllableSplit";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -46,6 +45,7 @@ import { applyTerms } from "@/lib/dailyTaskSystem";
 import { useT } from "@/lib/i18n";
 import { ALL_PAGES, DEFAULT_CONFIG } from "@/utils/navigationConfig";
 import { buildNavGroups } from "@/lib/navCatalogue";
+import { useModPagesVersion } from "@/lib/mods/registry";
 import HeaderWaveBlock from "@/components/layout/HeaderWaveBlock";
 import SidebarNav from "@/components/layout/SidebarNav";
 import HeaderPageMenu from "@/components/layout/HeaderPageMenu";
@@ -584,6 +584,7 @@ export function V2StatusLine({ settingsRow, uiV2, classicHost = false }) {
 function useNavItems(settingsRow) {
   const terms = useTerms();
   const navConfig = settingsRow?.navigation_config || DEFAULT_CONFIG;
+  const modNavV = useModPagesVersion();
   const termMap = useMemo(() => ({
     alters: terms.Alters,
     checkin: `${terms.System} Meeting`,
@@ -595,7 +596,7 @@ function useNavItems(settingsRow) {
     .filter(Boolean)
     .map((p) => ({ ...p, label: termMap[p.id] || p.label }));
   const primaryIds = navConfig.bottomBar || DEFAULT_CONFIG.bottomBar;
-  const primary = useMemo(() => resolve(primaryIds), [primaryIds, termMap]);
+  const primary = useMemo(() => resolve(primaryIds), [primaryIds, termMap, modNavV]);
   // The rail has room the bottom bar doesn't — everything else the user has
   // chosen for their dashboard goes underneath, so desktop isn't limited to
   // five destinations.
@@ -607,7 +608,7 @@ function useNavItems(settingsRow) {
     return Object.entries(raw)
       .map(([label, items]) => ({ label, items: items.filter((i) => !primaryIds.includes(i.id)) }))
       .filter((g) => g.items.length > 0);
-  }, [terms.Alters, terms.System, primaryIds]);
+  }, [terms.Alters, terms.System, primaryIds, modNavV]);
   return { primary, groups };
 }
 
@@ -1110,41 +1111,6 @@ function useHomeEditMode() {
 
 // The page-tab row's contents — one implementation for the fixed bottom
 // bar AND the fold-out strip when the bars are swapped (reuse, don't fork).
-// Bottom-tab label. One line when it fits; when it doesn't (wide custom fonts),
-// it breaks at a SYLLABLE — "Head-" / "space", never "Headsp-" / "ace" — or at
-// an existing space / hyphen ("Check-In" / "Log").
-function TabLabel({ label }) {
-  const boxRef = useRef(null);
-  const ghostRef = useRef(null);
-  const [tight, setTight] = useState(false);
-  useLayoutEffect(() => {
-    const check = () => {
-      const b = boxRef.current, g = ghostRef.current;
-      if (b && g) setTight(g.offsetWidth > b.clientWidth + 1);
-    };
-    check();
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(check) : null;
-    if (ro && boxRef.current) ro.observe(boxRef.current);
-    document.fonts?.ready?.then(check);
-    return () => ro?.disconnect();
-  }, [label]);
-
-  let lines = [label];
-  if (tight) {
-    const words = String(label).trim().split(/\s+/);
-    if (words.length > 1) lines = [words.slice(0, -1).join(" "), words[words.length - 1]];
-    else if (label.includes("-")) { const i = label.indexOf("-"); lines = [label.slice(0, i + 1), label.slice(i + 1)]; }
-    else { const sp = syllableSplit(label); if (sp) lines = [sp[0] + "-", sp[1]]; }
-  }
-  const font = { fontSize: "clamp(0.5rem, 2.5vw, 0.625rem)" };
-  return (
-    <span ref={boxRef} className="block font-medium leading-[1.05] w-full min-w-0 text-center relative" style={font}>
-      <span ref={ghostRef} aria-hidden="true" className="absolute invisible whitespace-nowrap pointer-events-none left-0 top-0">{label}</span>
-      {lines.map((ln, i) => <span key={i} className="block truncate">{ln}</span>)}
-    </span>
-  );
-}
-
 function TabButtons({ items, uiV2, isActive, navigate, t }) {
   return (
     <div className="flex items-stretch overflow-x-auto w-full" style={{ height: "var(--v2-strip-h)" }} role="tablist" aria-label={t("nav.appNav")}>
@@ -1154,13 +1120,13 @@ function TabButtons({ items, uiV2, isActive, navigate, t }) {
         return (
           <button key={item.id} type="button" role="tab" aria-selected={on}
             onClick={() => navigate(item.path)}
-            className="flex-1 basis-0 min-w-0 overflow-hidden flex flex-col items-center justify-center gap-0.5 px-0.5"
+            className="flex-1 basis-0 min-w-[56px] flex flex-col items-center justify-center gap-0.5 px-1 overflow-hidden"
             style={{
               color: on ? "var(--v2-accent)" : "hsl(var(--muted-foreground))",
               boxShadow: on ? "inset 0 calc(var(--v2-border-w) + 1px) 0 var(--v2-accent)" : "none",
             }}>
-            <IconSlot override={uiV2.icons?.pages?.[item.id]} Default={Icon} style={{ width: 18, height: 18 }} />
-            <TabLabel label={item.label} />
+            <IconSlot override={uiV2.icons?.pages?.[item.id]} Default={Icon} style={{ width: 18, height: 18, flexShrink: 0 }} />
+            <span className="os-tab-label text-[0.625em] font-medium leading-tight">{item.label}</span>
           </button>
         );
       })}

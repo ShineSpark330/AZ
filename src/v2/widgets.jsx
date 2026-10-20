@@ -34,9 +34,11 @@ import { Square,
   Moon, Megaphone, Bell, FolderOpen, ChevronLeft, ChevronRight, NotebookPen,
   Pin, Wind, Link2, Vote, CalendarDays, BarChart2, MessageSquare, Hash, Activity,
   CalendarRange, Grid2X2, CalendarClock, AlarmClock, ListChecks, GraduationCap, CheckCircle2, Music
-, Map, MapPin
+, Map, MapPin,
+  HeartHandshake, Target,
 } from "lucide-react";
 import { buildGridItems, findGridItem } from "@/lib/navCatalogue";
+import { useModPagesVersion } from "@/lib/mods/registry";
 import { useResolvedAvatarUrl } from "@/hooks/useResolvedAvatarUrl";
 import { AssetButton } from "@/components/shared/AssetPickerModal";
 import DOMPurify from "dompurify";
@@ -61,6 +63,7 @@ import TriggerEditModal from "@/components/fronting/TriggerEditModal";
 import SwitchJournalModal from "@/components/journal/SwitchJournalModal";
 import EmotionWheelPicker from "@/components/emotions/EmotionWheelPicker";
 import SymptomsSection from "@/components/symptoms/SymptomsSection";
+import { resolveMergedSymptomId } from "@/lib/symptomDuplicates";
 import DiarySection, { hasDiaryData } from "@/components/diary/DiarySection";
 import EmotionAnalytics from "@/components/emotions/EmotionAnalytics";
 import SymptomAnalytics from "@/components/analytics/SymptomAnalytics";
@@ -106,6 +109,7 @@ import {
   InnerMapWidget, InnerLocationsWidget,
 } from "@/v2/moreWidgets";
 import { COMMAND_WIDGETS, CommandWidget } from "@/v2/commandWidgets";
+import { NeedsBalanceWidget, WishesWidget, GoalsWidget } from "@/v2/needsWidgets";
 
 const fmtTime = (d) => new Date(d).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 // Compact "how long so far" — reads better than a clock time in a narrow
@@ -536,7 +540,7 @@ function TodayWidget() {
     <Section label={tr("widget.today.label")}
       action={<span className="flex items-center gap-2">
         <TextAction onClick={() => setAddOpen(true)}>+ {tr("widget.today.addBtn")}</TextAction>
-        <TextAction onClick={() => navigate("/activities")}>{tr("widget.today.open")}</TextAction>
+        <TextAction onClick={() => navigate("/planner")}>{tr("widget.today.open")}</TextAction>
       </span>}>
       <TodayAddSheet open={addOpen} onClose={() => setAddOpen(false)} />
       <PlanDetailsSheet
@@ -882,7 +886,8 @@ function AppTileWidget({ mode, settings }) {
   const tr = useT();
   const t = useTerms();
   const navigate = useNavigate();
-  const items = React.useMemo(() => buildGridItems(t.Alters, t.System), [t.Alters, t.System]);
+  const modNavV = useModPagesVersion();
+  const items = React.useMemo(() => buildGridItems(t.Alters, t.System), [t.Alters, t.System, modNavV]);
   const item = findGridItem(items, settings?.targetId);
   const customIcon = useResolvedAvatarUrl(settings?.iconUrl || "");
   if (!item) return <Muted>{tr("widget.app.missing")}</Muted>;
@@ -1187,7 +1192,10 @@ function JournalWidget({ settings }) {
   const list = sortJournalsNewestFirst(entries).slice(0, limit);
   return (
     <Section label={tr("widget.journal.label")}
-      action={<TextAction onClick={() => navigate("/journals?compose=1")}>{tr("widget.journal.new")}</TextAction>}>
+      action={<span className="flex items-center gap-3">
+        <TextAction onClick={() => navigate("/journals?import=1")}>{tr("widget.journal.import")}</TextAction>
+        <TextAction onClick={() => navigate("/journals?compose=1")}>{tr("widget.journal.new")}</TextAction>
+      </span>}>
       {list.length === 0 && <Muted>{tr("widget.journal.empty")}</Muted>}
       {list.map((e) => (
         <Row key={e.id} primary={e.title || tr("widget.journal.untitled")}
@@ -1298,7 +1306,8 @@ function FolderWidget({ settings, mode }) {
   const t = useTerms();
   const navigate = useNavigate();
   const [open, setOpen] = React.useState(false);
-  const items = React.useMemo(() => buildGridItems(t.Alters, t.System), [t.Alters, t.System]);
+  const modNavV = useModPagesVersion();
+  const items = React.useMemo(() => buildGridItems(t.Alters, t.System), [t.Alters, t.System, modNavV]);
   const apps = (settings?.appIds || []).map((id) => findGridItem(items, id)).filter(Boolean);
   const label = settings?.label || tr("widget.folder.label");
 
@@ -1888,7 +1897,7 @@ function RecentActivitiesWidget({ settings }) {
     .slice(0, limit);
   return (
     <Section label={tr("widget.recentActs.label")}
-      action={<TextAction onClick={() => navigate("/activities")}>{tr("widget.today.open")}</TextAction>}>
+      action={<TextAction onClick={() => navigate("/planner")}>{tr("widget.today.open")}</TextAction>}>
       {done.length === 0 && <Muted>{tr("widget.recentActs.empty")}</Muted>}
       {done.map((a) => (
         <Row key={a.id} primary={a.activity_name}
@@ -1933,7 +1942,8 @@ function QuickLinksWidget({ settings, mode, api }) {
   const tr = useT();
   const navigate = useNavigate();
   const groups = useList("groups", "Group");
-  const items = React.useMemo(() => buildGridItems(t.Alters, t.System), [t.Alters, t.System]);
+  const modNavV = useModPagesVersion();
+  const items = React.useMemo(() => buildGridItems(t.Alters, t.System), [t.Alters, t.System, modNavV]);
   const alters = api?.alters || [];
 
   const links = [
@@ -2485,7 +2495,10 @@ function LogSymptomWidget({ settings }) {
   const tr = useT();
   const qc = useQueryClient();
   const symptoms = useList("symptoms", "Symptom");
-  const chosenIds = Array.isArray(settings?.symptomIds) ? settings.symptomIds : [];
+  // A chosen symptom that was merged away (Tidy up duplicates) follows its
+  // merged_into link to the row that now holds its history.
+  const byId = Object.fromEntries(symptoms.map((x) => [x.id, x]));
+  const chosenIds = (Array.isArray(settings?.symptomIds) ? settings.symptomIds : []).map((id) => resolveMergedSymptomId(id, byId));
   const live = symptoms.filter((x) => !x.is_archived);
   const shown = chosenIds.length ? live.filter((x) => chosenIds.includes(x.id)) : live.slice(0, 8);
 
@@ -3077,6 +3090,30 @@ export const V2_WIDGETS = {
     render: sized(({ settings }) => <TasksWidget settings={settings} />),
     supportsModes: ["normal"], supportsMultiInstance: true,
     configFields: [{ key: "limit", type: "number", label: "How many to show", min: 1, max: 20, default: 6 },],
+    defaultSpan: { cols: 4, rows: 2 }, minSpan: { cols: 2, rows: 1 }, maxSpan: { cols: 12, rows: 8 },
+  },
+  needs_balance: {
+    label: "Needs balance", description: "Which {{alters}} have waited longest for something they enjoy, need or wished for.",
+    icon: HeartHandshake, category: "needs",
+    render: sized(({ settings }) => <NeedsBalanceWidget settings={settings} />),
+    supportsModes: ["minimal", "normal"], supportsMultiInstance: true,
+    configFields: [{ key: "limit", type: "number", label: "How many {{alters}}", min: 1, max: 20, default: 5 }],
+    defaultSpan: { cols: 4, rows: 2 }, minSpan: { cols: 2, rows: 1 }, maxSpan: { cols: 12, rows: 8 },
+  },
+  wishes: {
+    label: "Wishes", description: "Everyone's open wishes, longest waiting first. Private wishes stay on their own profile.",
+    icon: Heart, category: "needs",
+    render: sized(({ settings }) => <WishesWidget settings={settings} />),
+    supportsModes: ["minimal", "normal"], supportsMultiInstance: true,
+    configFields: [{ key: "limit", type: "number", label: "How many to show", min: 1, max: 30, default: 6 }],
+    defaultSpan: { cols: 4, rows: 2 }, minSpan: { cols: 2, rows: 1 }, maxSpan: { cols: 12, rows: 8 },
+  },
+  goals: {
+    label: "Goals", description: "Goals you're working on, with steps done and the next step.",
+    icon: Target, category: "needs",
+    render: sized(({ settings }) => <GoalsWidget settings={settings} />),
+    supportsModes: ["minimal", "normal"], supportsMultiInstance: true,
+    configFields: [{ key: "limit", type: "number", label: "How many to show", min: 1, max: 20, default: 5 }],
     defaultSpan: { cols: 4, rows: 2 }, minSpan: { cols: 2, rows: 1 }, maxSpan: { cols: 12, rows: 8 },
   },
   sleep: {

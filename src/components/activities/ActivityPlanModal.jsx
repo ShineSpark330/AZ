@@ -32,6 +32,8 @@ import {
   membersForBranch,
   applyEditToSeries,
   BRANCH_LABELS,
+  maxOccurrences,
+  clampOccurrenceCount,
 } from "@/lib/recurrenceUtils";
 
 // "I'm scheduling this" modal — future-dated plan path.
@@ -146,16 +148,16 @@ export default function ActivityPlanModal({
   const [isLoading, setIsLoading] = useState(false);
 
   const [title, setTitleRaw] = useState("");
-  // v0.258.4: set once the user types in the title box, so late-loading
-  // activity data can never overwrite what they typed.
+  // Set once the user types in the title box, so late-loading activity data
+  // can never overwrite what they typed.
   const titleTouched = useRef(false);
   const setTitle = (v) => { titleTouched.current = true; setTitleRaw(v); };
-  // Plan color tag — independent of the activity color (Activity.tag_color).
-  const [tagColor, setTagColor] = useState(null);
   // Which plan the form was last filled from. The fill below re-runs when the
   // parent hands over a fresh copy of the same plan (a background refresh);
   // without this guard that wiped whatever had been typed so far.
   const hydratedFor = useRef(null);
+  // Plan color tag — independent of the activity color (Activity.tag_color).
+  const [tagColor, setTagColor] = useState(null);
   const [location, setLocation] = useState("");
   const [isCritical, setIsCritical] = useState(false);
   const [leadSteps, setLeadSteps] = useState(DEFAULT_LEAD_STEPS);
@@ -237,9 +239,9 @@ export default function ActivityPlanModal({
   });
 
   // The title to show when editing: the plan's own name, unless that name is
-  // only the picked activity's name (then the activity already says it).
-  // v0.258.4 — a plan with a custom title AND an activity used to open with an
-  // empty title, and saving then replaced the title with the activity name.
+  // only the picked activity's name (then the activity already says it). A
+  // plan with a custom title AND an activity used to open with an empty
+  // title, and saving then replaced the title with the activity name.
   const deriveEditTitle = (plan, cats) => {
     const name = (plan?.activity_name || "").trim();
     if (!name) return "";
@@ -559,7 +561,7 @@ export default function ActivityPlanModal({
         }
         await recordAuthoredText({
           ...prepared, alters: alters || [], sourceType: "activity", sourceId: editingPlan.id, sourceLabel: "Plan note",
-          navigatePath: `/activities?date=${format(timestamp, "yyyy-MM-dd")}&highlight=${editingPlan.id}`,
+          navigatePath: `/planner?date=${format(timestamp, "yyyy-MM-dd")}&highlight=${editingPlan.id}`,
         });
 
         if (linkedTask) {
@@ -618,7 +620,7 @@ export default function ActivityPlanModal({
       // createPlan doesn't hand back the created ids — land on the plan's day.
       await recordAuthoredText({
         ...prepared, alters: alters || [], sourceType: "activity", sourceId: recurrenceGroupId || "", sourceLabel: "Plan note",
-        navigatePath: `/activities?date=${format(timestamp, "yyyy-MM-dd")}`,
+        navigatePath: `/planner?date=${format(timestamp, "yyyy-MM-dd")}`,
       });
 
       // No fronting-session updates here — plan-mode plans are future-
@@ -1003,8 +1005,7 @@ export default function ActivityPlanModal({
                       type="button"
                       onClick={() => {
                         setRecurrenceInterval(opt.value);
-                        // Only yearly may exceed 52 — pull the count back when leaving it.
-                        if (opt.value !== "yearly") setRecurrenceCount((c) => Math.min(c, 52));
+                        setRecurrenceCount((c) => clampOccurrenceCount(opt.value, c));
                       }}
                       className={`text-xs px-2.5 py-1 rounded-full border transition-all ${active ? "border-primary/50 bg-primary/10 text-primary" : "border-border/50 text-muted-foreground hover:bg-muted/50"}`}
                     >
@@ -1015,22 +1016,21 @@ export default function ActivityPlanModal({
               </div>
               {recurrenceInterval !== "none" && (
                 <div className="flex items-center gap-2 pt-1">
-                  <label className="text-xs text-muted-foreground">How many occurrences?</label>
+                  <label className="text-xs text-muted-foreground">
+                    {recurrenceInterval === "yearly" ? "How many years?" : "How many occurrences?"}
+                  </label>
                   <Input
                     type="number"
                     min={1}
-                    max={recurrenceInterval === "yearly" ? 100 : 52}
+                    max={maxOccurrences(recurrenceInterval)}
                     value={recurrenceCount}
                     onChange={(e) => {
                       const n = parseInt(e.target.value, 10);
-                      const cap = recurrenceInterval === "yearly" ? 100 : 52;
-                      setRecurrenceCount(Number.isFinite(n) ? Math.max(1, Math.min(cap, n)) : 1);
+                      setRecurrenceCount(clampOccurrenceCount(recurrenceInterval, n));
                     }}
                     className="w-20 h-8 text-sm"
                   />
-                  <span className="text-xs text-muted-foreground">
-                    {recurrenceInterval === "yearly" ? "(years, max 100)" : "(max 52)"}
-                  </span>
+                  <span className="text-xs text-muted-foreground">(max {maxOccurrences(recurrenceInterval)})</span>
                 </div>
               )}
             </div>

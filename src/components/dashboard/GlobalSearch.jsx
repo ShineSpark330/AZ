@@ -7,7 +7,9 @@ import { Search, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useTerms } from "@/lib/useTerms";
 import { buildSearchIndex, searchIndex, groupResults } from "@/lib/globalSearch";
+import { useExperimentalOn, isExperimentalPath } from "@/lib/experimentalFeatures";
 import { listSystems } from "@/lib/systems";
+import { listMods, MODS_QUERY_KEY } from "@/lib/mods/modStore";
 
 const localMode = isLocalMode();
 const db = localMode ? localEntities : base44.entities;
@@ -42,6 +44,9 @@ const TYPE_ICONS = {
   location:  "📍",
   syschange: "🔀",
   note:      "📝",
+  wish:      "💗",
+  goal:      "🎯",
+  turn:      "🤝",
   reminder:  "⏰",
   grocery:   "🛒",
   chat:      "💬",
@@ -50,6 +55,8 @@ const TYPE_ICONS = {
   presence:  "🌫️",
   contact:   "📇",
   system:    "🪞",
+  asset:     "🖼️",
+  mod:       "🧩",
 };
 
 function getTypeLabels(t) {
@@ -70,6 +77,9 @@ function getTypeLabels(t) {
     location:  "Locations",
     syschange: `${t.System} History`,
     note:      `${t.Alter} Notes`,
+    wish:      "Wishes",
+    goal:      "Goals",
+    turn:      "Turn agreements",
     reminder:  "Reminders",
     grocery:   "Grocery List",
     chat:      "Chat Messages",
@@ -78,6 +88,8 @@ function getTypeLabels(t) {
     presence:  "New Presences",
     contact:   "Contacts",
     system:    t.Systems,
+    asset:     "Assets",
+    mod:       "Mods",
   };
 }
 
@@ -202,6 +214,25 @@ export default function GlobalSearch({ autoFocus = false, onNavigate }) {
     queryFn: () => safeList(base44.entities.SystemCheckIn, "-created_date", 200),
     staleTime: stale, enabled,
   });
+  const { data: wishes = [] } = useQuery({
+    queryKey: ["searchWishes"],
+    queryFn: () => safeList(base44.entities.Wish, "-created_date", 500),
+  });
+  const { data: goals = [] } = useQuery({
+    queryKey: ["searchGoals"],
+    queryFn: () => safeList(base44.entities.Goal, "-created_date", 500),
+    staleTime: stale, enabled,
+  });
+  const { data: turns = [] } = useQuery({
+    queryKey: ["searchTurns"],
+    queryFn: () => safeList(base44.entities.TurnAgreement, "-created_date", 500),
+    staleTime: stale, enabled,
+  });
+  const { data: goalSteps = [] } = useQuery({
+    queryKey: ["searchGoalSteps"],
+    queryFn: () => safeList(base44.entities.GoalStep, "-created_date", 2000),
+    staleTime: stale, enabled,
+  });
   const { data: alterNotes = [] } = useQuery({
     queryKey: ["searchAlterNotes"],
     queryFn: () => safeList(base44.entities.AlterNote, "-created_date", 300),
@@ -273,13 +304,28 @@ export default function GlobalSearch({ autoFocus = false, onNavigate }) {
     queryFn: () => safeList(localEntities.Contact),
     staleTime: stale, enabled,
   });
+  const { data: activityCategories = [] } = useQuery({
+    queryKey: ["activityCategories"],
+    queryFn: () => safeList(localEntities.ActivityCategory),
+    staleTime: stale, enabled,
+  });
+  const { data: assets = [] } = useQuery({
+    queryKey: ["imageAssets"],
+    queryFn: () => safeList(localEntities.ImageAsset, "-created_date"),
+    staleTime: stale, enabled,
+  });
+  const { data: mods = [] } = useQuery({
+    queryKey: MODS_QUERY_KEY,
+    queryFn: listMods,
+    staleTime: stale, enabled,
+  });
 
   const index = useMemo(() => buildSearchIndex({
     terms,
     alters, customFieldDefs,
     journals, supportJournals,
     bulletins, bulletinComments, polls,
-    activities, sleep,
+    activities, sleep, activityCategories,
     tasks, dailyTaskTemplates,
     statusNotes, emotionCheckIns,
     therapyNotes,
@@ -290,6 +336,8 @@ export default function GlobalSearch({ autoFocus = false, onNavigate }) {
     locations,
     systemChangeEvents,
     alterNotes, alterMessages,
+    wishes,
+    goals, goalSteps, turns,
     reminders,
     groceries,
     chatMessages, chatChannels,
@@ -297,12 +345,14 @@ export default function GlobalSearch({ autoFocus = false, onNavigate }) {
     presences,
     contacts,
     systems: listSystems(),
+    assets,
+    mods,
 }), [
     terms,
     alters, customFieldDefs,
     journals, supportJournals,
     bulletins, bulletinComments, polls,
-    activities, sleep,
+    activities, sleep, activityCategories,
     tasks, dailyTaskTemplates,
     statusNotes, emotionCheckIns,
     therapyNotes,
@@ -313,15 +363,24 @@ export default function GlobalSearch({ autoFocus = false, onNavigate }) {
     locations,
     systemChangeEvents,
     alterNotes, alterMessages,
+    wishes,
+    goals, goalSteps, turns,
     reminders,
     groceries,
     chatMessages, chatChannels,
     groundingTechniques, innerWorldLocations,
     presences,
     contacts,
+    assets,
+    mods,
 ]);
 
-  const searchResults = useMemo(() => searchIndex(index, query, 80), [index, query]);
+  // Results that open Needs, Goals or Mods stay out while those are hidden.
+  const experimentalFeaturesOn = useExperimentalOn();
+  const searchResults = useMemo(() => {
+    const hits = searchIndex(index, query, 80);
+    return experimentalFeaturesOn ? hits : hits.filter((r) => !isExperimentalPath(r.path));
+  }, [index, query, experimentalFeaturesOn]);
   const groupedResults = useMemo(() => groupResults(searchResults), [searchResults]);
 
   useEffect(() => {
@@ -357,9 +416,9 @@ export default function GlobalSearch({ autoFocus = false, onNavigate }) {
   };
 
   const TYPE_ORDER = [
-    "setting", "alter", "journal", "status", "therapy", "emotion", "bulletin", "note",
+    "setting", "alter", "journal", "status", "therapy", "emotion", "bulletin", "note", "wish", "goal", "turn",
     "activity", "task", "reminder", "checkin", "diarycard",
-    "location", "syschange", "symptom", "group", "contact", "chat", "grounding", "innerworld", "grocery", "presence", "system",
+    "location", "syschange", "symptom", "group", "contact", "chat", "grounding", "innerworld", "grocery", "presence", "system", "asset", "mod",
   ];
 
   return (

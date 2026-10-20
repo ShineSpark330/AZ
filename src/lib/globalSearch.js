@@ -282,9 +282,26 @@ export function buildActivityRecords({ items = [] }) {
       id: a.id,
       title: a.activity_name || "Activity",
       subtitle: snippet(a.notes) || formatDateLabel(a.timestamp) || "",
-      path: `/activities?date=${dateStr}&highlight=${a.id}`,
+      path: `/planner?date=${dateStr}&highlight=${a.id}`,
       searchableText: joinNonEmpty([a.activity_name, a.notes, a.category, dateSearchBlob(a.timestamp)]).toLowerCase(),
       sortDate: a.timestamp,
+    };
+  });
+}
+
+// The activities themselves (categories), opening their page on Activities.
+export function buildActivityCategoryRecords({ items = [] }) {
+  const byId = Object.fromEntries(items.map((c) => [c.id, c]));
+  return items.filter((c) => c?.id && c.name).map((c) => {
+    const parent = c.parent_category_id && c.parent_category_id !== c.id ? byId[c.parent_category_id] : null;
+    return {
+      type: "activity",
+      id: `cat-${c.id}`,
+      title: c.name,
+      subtitle: parent ? `Activity · in ${parent.name}` : "Activity",
+      path: `/activities?category=${encodeURIComponent(c.id)}`,
+      searchableText: joinNonEmpty([c.name, parent?.name]).toLowerCase(),
+      sortDate: c.updated_date || c.created_date,
     };
   });
 }
@@ -585,6 +602,75 @@ export function buildAlterNoteRecords({ items = [], alters = [] }) {
   });
 }
 
+// Wishes (System Needs). Private wishes stay out of search — they only
+// show on their own profile.
+export function buildWishRecords({ items = [], alters = [] }) {
+  const alterById = new Map(alters.map((a) => [a.id, a]));
+  return items.filter((w) => w && !w.is_private).map((w) => {
+    const owners = (w.owner_alter_ids || []).map((id) => alterById.get(id)).filter(Boolean);
+    const ownerNames = owners.map((a) => a.name || a.alias).filter(Boolean);
+    const driving = stripHtml(w.driving);
+    const impact = stripHtml(w.impact);
+    const first = owners[0];
+    return {
+      type: "wish",
+      id: `wish-${w.id}`,
+      title: w.title || "Wish",
+      subtitle: [w.for_everyone ? "Everyone" : ownerNames.join(", "), w.kind, w.status && w.status !== "wished" ? w.status.replace("_", " ") : null]
+        .filter(Boolean).join(" · "),
+      path: first ? `/alter/${first.id}?tab=wishlist&highlight=${w.id}` : `/needs?tab=wishes&highlight=${w.id}`,
+      searchableText: joinNonEmpty([
+        w.title, w.kind, driving, impact, ...ownerNames, w.url, dateSearchBlob(w.created_date),
+      ]).toLowerCase(),
+      sortDate: w.created_date,
+    };
+  });
+}
+
+// Goals (System Needs). Step titles are searchable too, so finding "call
+// the dentist" lands on the goal it belongs to.
+export function buildGoalRecords({ items = [], steps = [], alters = [] }) {
+  const alterById = new Map(alters.map((a) => [a.id, a]));
+  const stepTitles = new Map();
+  for (const s of steps || []) {
+    if (!s || s.removed_at || !s.goal_id) continue;
+    if (!stepTitles.has(s.goal_id)) stepTitles.set(s.goal_id, []);
+    stepTitles.get(s.goal_id).push(s.title);
+  }
+  return items.filter(Boolean).map((g) => {
+    const ownerNames = (g.owner_alter_ids || []).map((id) => alterById.get(id)).filter(Boolean).map((a) => a.name || a.alias).filter(Boolean);
+    const status = { paused: "paused", done: "reached", let_go: "let go" }[g.status];
+    return {
+      type: "goal",
+      id: `goal-${g.id}`,
+      title: g.title || "Goal",
+      subtitle: [g.for_everyone ? "Everyone" : ownerNames.join(", "), status].filter(Boolean).join(" · "),
+      path: `/goals?highlight=${g.id}`,
+      searchableText: joinNonEmpty([
+        g.title, stripHtml(g.why), stripHtml(g.impact), ...ownerNames, ...(stepTitles.get(g.id) || []), dateSearchBlob(g.created_date),
+      ]).toLowerCase(),
+      sortDate: g.created_date,
+    };
+  });
+}
+
+// Turn agreements (Needs page): "this now, that next".
+export function buildTurnRecords({ items = [], alters = [] }) {
+  const alterById = new Map(alters.map((a) => [a.id, a]));
+  const names = (ids) => (ids || []).map((id) => alterById.get(id)).filter(Boolean).map((a) => a.name || a.alias).filter(Boolean);
+  return items.filter(Boolean).map((t) => ({
+    type: "turn",
+    id: `turn-${t.id}`,
+    title: `${t.first_title || "First"}, then ${t.second_title || "next"}`,
+    subtitle: [names(t.first_alter_ids).join(", "), names(t.second_alter_ids).join(", ")].filter(Boolean).join(" → "),
+    path: `/needs?tab=turns&highlight=${t.id}`,
+    searchableText: joinNonEmpty([
+      t.first_title, t.second_title, stripHtml(t.note), ...names(t.first_alter_ids), ...names(t.second_alter_ids), dateSearchBlob(t.created_date),
+    ]).toLowerCase(),
+    sortDate: t.created_date,
+  }));
+}
+
 export function buildSleepRecords({ items = [] }) {
   return items.map((s) => ({
     type: "activity",
@@ -645,6 +731,24 @@ export function buildGroceryRecords({ items = [] }) {
   }));
 }
 
+// Named items in Assets (pictures, songs, videos, files). Unnamed stored
+// pictures have no record and nothing a person would search for.
+export function buildAssetRecords({ items = [] }) {
+  return items.filter((a) => a && (a.name || a.file_name)).map((a) => {
+    const folder = (a.folder || "").trim();
+    const kind = a.kind === "video" ? "Video" : a.kind === "audio" ? "Audio" : a.kind === "file" ? "File" : "Image";
+    return {
+      type: "asset",
+      id: a.id,
+      title: a.name || a.file_name,
+      subtitle: folder ? `${kind} · ${folder}` : kind,
+      path: folder && !a.owner_alter_id ? `/assets?folder=${encodeURIComponent(folder)}` : "/assets",
+      searchableText: joinNonEmpty([a.name, a.file_name, folder, kind]).toLowerCase(),
+      sortDate: a.created_date,
+    };
+  });
+}
+
 // ---------- index builder + searcher ----------
 
 /**
@@ -702,12 +806,42 @@ export function buildSettingsRecords({ terms = {} } = {}) {
   }));
 }
 
+// Installed mods (src/pages/Mods.jsx), and each page of a switched-on mod.
+export function buildModRecords({ items = [] }) {
+  const out = [];
+  for (const m of items || []) {
+    if (!m?.mod_id) continue;
+    out.push({
+      type: "mod",
+      id: m.id,
+      title: m.name || m.mod_id,
+      subtitle: m.enabled ? "Mod" : "Mod · turned off",
+      path: "/mods",
+      searchableText: joinNonEmpty([m.name, m.mod_id, m.author, m.description, "mod mods add-on"]).toLowerCase(),
+      sortDate: m.created_date,
+    });
+    if (!m.enabled) continue;
+    for (const p of m.pages || []) {
+      out.push({
+        type: "mod",
+        id: `${m.id}:${p.id}`,
+        title: p.title,
+        subtitle: `${m.name} · mod page`,
+        path: `/mod/${m.mod_id}/${p.id}`,
+        searchableText: joinNonEmpty([p.title, m.name]).toLowerCase(),
+        sortDate: m.created_date,
+      });
+    }
+  }
+  return out;
+}
+
 export function buildSearchIndex(sources = {}) {
   const {
     alters, customFieldDefs,
     journals, supportJournals,
     bulletins, bulletinComments, polls,
-    activities, sleep,
+    activities, sleep, activityCategories,
     tasks, dailyTaskTemplates,
     statusNotes, emotionCheckIns,
     therapyNotes,
@@ -718,6 +852,8 @@ export function buildSearchIndex(sources = {}) {
     locations,
     systemChangeEvents,
     alterNotes, alterMessages,
+    wishes,
+    goals, goalSteps, turns,
     reminders,
     groceries,
     chatMessages, chatChannels,
@@ -725,6 +861,8 @@ export function buildSearchIndex(sources = {}) {
     presences,
     contacts,
     systems,
+    assets,
+    mods,
     terms,
   } = sources;
 
@@ -752,14 +890,20 @@ export function buildSearchIndex(sources = {}) {
   records.push(...buildSystemChangeRecords({ items: systemChangeEvents || [] }));
   records.push(...buildAlterNoteRecords({ items: alterNotes || [], alters: alters || [] }));
   records.push(...buildAlterNoteRecords({ items: alterMessages || [], alters: alters || [] }));
+  records.push(...buildWishRecords({ items: wishes || [], alters: alters || [] }));
+  records.push(...buildGoalRecords({ items: goals || [], steps: goalSteps || [], alters: alters || [] }));
+  records.push(...buildTurnRecords({ items: turns || [], alters: alters || [] }));
   records.push(...buildReminderRecords({ items: reminders || [] }));
   records.push(...buildGroceryRecords({ items: groceries || [] }));
   records.push(...buildChatMessageRecords({ items: chatMessages || [], channels: chatChannels || [] }));
   records.push(...buildGroundingTechniqueRecords({ items: groundingTechniques || [] }));
   records.push(...buildInnerWorldLocationRecords({ items: innerWorldLocations || [] }));
+  records.push(...buildActivityCategoryRecords({ items: activityCategories || [] }));
   records.push(...buildPresenceRecords({ items: presences || [], alters: alters || [] }));
   records.push(...buildContactRecords({ items: contacts || [] }));
   records.push(...buildSystemRecords({ items: systems || [] }));
+  records.push(...buildAssetRecords({ items: assets || [] }));
+  records.push(...buildModRecords({ items: mods || [] }));
   return records;
 }
 

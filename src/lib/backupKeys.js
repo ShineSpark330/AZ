@@ -17,8 +17,13 @@
 //   - the custom backup-file password (symphony_autobackup_pw_v1) — a
 //     mirrored copy would land inside the very file it locks, and inside
 //     every plain export
+//   - the off-device backup copy target + its size guard
+//     (symphony_backup_copy_v1, symphony_backup_copy_last_v1) — a file
+//     grant only means anything on the device that was given it; a second
+//     device restoring it would aim at the same cloud file
 
 export const BACKUP_LS_KEYS = [
+  "symphony_experimental_features_v1",
   "symphony_newui_banner_dismissed_v1",
   "symphony_themeMode",
   "symphony_selectedTheme",
@@ -47,6 +52,7 @@ export const BACKUP_LS_KEYS = [
   "symphony_checkin_log_display",
   // "Keep original images" upload toggle (v0.253.1).
   "symphony_keep_original_images_v1",
+  "symphony_backup_part_mb_v1",
   "symphony_act_view_mode",
   "symphony_polls_default_tally_mode",
   "symphony_grounding_step_mode",
@@ -60,6 +66,8 @@ export const BACKUP_LS_KEYS = [
   // itself is intentionally absent — see the header.
   "symphony_autobackup_encrypt",
   "symphony_autobackup_name_v1",
+  // Auto-backup file format (json / compact / zip).
+  "symphony_autobackup_format_v1",
   "symphony_autobackup_last_at",
   "symphony_backup_health_v1",
   "grocery_lock_on_close_v1",
@@ -94,6 +102,9 @@ export const BACKUP_LS_KEYS = [
   "symphony_locale",
   "symphony_plan_reminders_enabled",
   "symphony_plan_reminders_default_offset",
+  "symphony_plan_tag_colors",
+  "symphony_attach_save_copy_v1",
+  "symphony_image_view_quality_v1",
   "symphony_persist_notif_fronters_v1",
   "symphony_persist_notif_symptoms_v1",
   "symphony_persist_notif_activity_v1",

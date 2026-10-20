@@ -41,9 +41,9 @@ import { SetFrontGridCard, TRIGGER_CATEGORIES } from "@/components/fronting/SetF
 import { useTerms } from "@/lib/useTerms";
 import { useAlterLabel } from "@/lib/useAlterLabel";
 import { useResolvedAvatarUrl } from "@/hooks/useResolvedAvatarUrl";
-import { useFrontLevels, frontLevelLabel } from "@/lib/frontLevels";
+import { useFrontLevels, frontLevelLabel, soloDraftPlan } from "@/lib/frontLevels";
 import { useAlterSorter } from "@/lib/alterSort";
-import { useHoldDragLevel, FrontLevelRail, useFrontOptionsMenu } from "@/components/fronting/FrontLevelRail";
+import { useHoldDragLevel, useGroupLevelRail, FrontLevelRail, useFrontOptionsMenu } from "@/components/fronting/FrontLevelRail";
 import AlterSortToggle from "@/components/shared/AlterSortToggle";
 import { applyFrontSelection, reconcileActiveFront } from "@/lib/setFront";
 import { getAlterIdsByGroupFlag } from "@/lib/subsystemUtils";
@@ -241,12 +241,33 @@ export default function SetFrontSheet({ open, onClose, alters: altersProp }) {
   const toggleFromView = (id) => (draftIds.has(id) ? removeAlter(id) : addAlter(id));
   // Hold an {alter} in the add list/grid → the level spectrum → they join
   // the draft AT that level (the standard gesture, same as the board).
-  const addAtLevel = (id, levelId) => {
+  // A sideways slide on the rail ("sole") also clears that level — or the
+  // whole front — of everyone else, the same rule as the live rail.
+  // One id, or several (a whole subsystem held in the tree view): everyone
+  // given lands at the level; "sole" spares the whole group.
+  const addAtLevel = (idOrIds, levelId, { solo = false } = {}) => {
+    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+    if (!ids.length) return;
+    const group = new Set(ids);
     setIsUnsure(false);
     setDraft((prev) => {
-      const existing = prev.find((d) => d.alterId === id);
-      if (existing) return prev.map((d) => (d.alterId === id ? { ...d, level: levelId } : d));
-      return [...prev, { alterId: id, isPrimary: prev.length === 0, level: levelId, startTime: null }];
+      let next = prev.map((d) => (group.has(d.alterId) ? { ...d, level: levelId } : d));
+      for (const id of ids) {
+        if (!next.some((d) => d.alterId === id)) {
+          next.push({ alterId: id, isPrimary: next.length === 0, level: levelId, startTime: null });
+        }
+      }
+      if (solo) {
+        const plan = soloDraftPlan({
+          alterId: ids[0], levelId, cfg: levelCfg,
+          levelOf: Object.fromEntries(next.map((d) => [d.alterId, d.level])),
+        });
+        for (const id of ids) delete plan[id];
+        next = next
+          .filter((d) => plan[d.alterId] !== null)
+          .map((d) => (d.alterId in plan ? { ...d, level: plan[d.alterId], isPrimary: false } : d));
+      }
+      return next;
     });
   };
   const activeAlters = useMemo(() => alters.filter((a) => !a.is_archived), [alters]);
@@ -255,7 +276,7 @@ export default function SetFrontSheet({ open, onClose, alters: altersProp }) {
   const rowOptionsMenu = useFrontOptionsMenu((id) => altersById[id] || null);
   const { rail: addRail, getHoldProps: getAddHoldProps } = useHoldDragLevel({
     cfg: levelCfg,
-    onCommit: (alterId, levelId) => { suppressAddTap.current = Date.now() + 400; addAtLevel(alterId, levelId); },
+    onCommit: (alterId, levelId, extras = {}) => { suppressAddTap.current = Date.now() + 400; addAtLevel(alterId, levelId, extras); },
     onRemove: (alterId) => { suppressAddTap.current = Date.now() + 400; removeAlter(alterId); },
     onOptions: (alterId) => { suppressAddTap.current = Date.now() + 400; rowOptionsMenu.openOptions(alterId); },
   });
@@ -264,6 +285,32 @@ export default function SetFrontSheet({ open, onClose, alters: altersProp }) {
     if (addRail || Date.now() < suppressAddTap.current) return;
     addAlter(id);
   };
+  // Tree view: tap toggles, hold → the rail (one {alter}), and holding a
+  // subsystem / group header (or its "+ all") sets everyone in it at once.
+  const guardedToggleFromView = (id) => {
+    if (addRail || Date.now() < suppressAddTap.current) return;
+    toggleFromView(id);
+  };
+  const groupLevelRail = useGroupLevelRail({
+    cfg: levelCfg,
+    onCommit: addAtLevel,
+    onRemove: (ids) => { const gone = new Set(ids); setDraft((prev) => prev.filter((d) => !gone.has(d.alterId))); },
+  });
+  const draftLevelOf = (id) => draft.find((d) => d.alterId === id)?.level || null;
+  const commonLevelOf = (members) => {
+    if (!members.length || !members.every((a) => draftIds.has(a.id))) return null;
+    const lvl = draftLevelOf(members[0].id);
+    return members.every((a) => draftLevelOf(a.id) === lvl) ? lvl : null;
+  };
+  const levelName = (id) => {
+    const lvl = levelCfg.levels.find((l) => l.id === id);
+    return lvl ? frontLevelLabel(lvl, terms) : null;
+  };
+  const treeGroupRail = levelCfg.enabled ? {
+    getProps: (group, members, key) => groupLevelRail.getGroupHoldProps(key, members, group.name || "", commonLevelOf(members)),
+    suppressed: groupLevelRail.suppressed,
+    badge: (members) => (levelCfg.levels.length > 1 ? levelName(commonLevelOf(members)) : null),
+  } : null;
   const setSole = (id) => {
     setIsUnsure(false);
     setDraft([{ alterId: id, isPrimary: true, level: levelCfg.levels[0]?.id, startTime: null }]);
@@ -429,9 +476,12 @@ export default function SetFrontSheet({ open, onClose, alters: altersProp }) {
                     alters={activeAlters}
                     groups={groups}
                     isSelected={(id) => draftIds.has(id)}
-                    onToggle={(a) => toggleFromView(a.id)}
+                    onToggle={(a) => guardedToggleFromView(a.id)}
                     onSetMany={setMany}
                     maxHeight="40vh"
+                    rowProps={(a) => getAddHoldProps(a.id, draftLevelOf(a.id))}
+                    rowBadge={(a) => (draftIds.has(a.id) && levelCfg.levels.length > 1 ? levelName(draftLevelOf(a.id)) : null)}
+                    groupRail={treeGroupRail}
                   />
                 ) : viewMode === "grid" ? (
                   <div className="grid grid-cols-3 gap-2 py-1">
@@ -456,6 +506,7 @@ export default function SetFrontSheet({ open, onClose, alters: altersProp }) {
 
               {/* Hold-to-level rail for the add list/grid */}
               {rowOptionsMenu.node}
+              {groupLevelRail.node}
               <FrontLevelRail rail={addRail} cfg={levelCfg} withRemove
                 alterName={addRailAlter ? formatAlter(addRailAlter) : ""} />
 

@@ -38,6 +38,9 @@ export default function WysiwygEditor({ value = "", onChange, placeholder = "Wri
   // notebook widget). visualViewport tracks the keyboard height.
   const editorRef = useRef(null);
   const lastHtml = useRef(value);
+  // The editable's innerHTML as of the last value we applied or emitted —
+  // anything different in the DOM is typing the parent hasn't heard about.
+  const syncedBody = useRef(null);
   const imageInputRef = useRef(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [showAssetPicker, setShowAssetPicker] = useState(false);
@@ -47,12 +50,6 @@ export default function WysiwygEditor({ value = "", onChange, placeholder = "Wri
   // raw <style> out of the contentEditable and inject a SCOPED copy into a
   // sibling instead; reattach the raw text on emit so the value round-trips.
   const styleTextRef = useRef("");
-  const observerRef = useRef(null);
-  // What the editor holds right after we load a value into it (the browser
-  // may tidy the markup) — not a change the person made.
-  const baselineRef = useRef(null);
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
   const [scopedCss, setScopedCss] = useState("");
 
   const applyValue = useCallback((html) => {
@@ -64,11 +61,10 @@ export default function WysiwygEditor({ value = "", onChange, placeholder = "Wri
     const body = raw.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, (mm) => { styles.push(mm); return ""; });
     styleTextRef.current = styles.join("");
     const { styleCss } = scopeBioStyles(raw, "wysiwyg-live");
-    if (editorRef.current) editorRef.current.innerHTML = body;
-    // Our own write isn't something the person typed — don't let the change
-    // watcher below report it back as an edit.
-    try { observerRef.current?.takeRecords(); } catch { /* unsupported */ }
-    baselineRef.current = (editorRef.current?.innerHTML ?? body) + styleTextRef.current;
+    if (editorRef.current) {
+      editorRef.current.innerHTML = body;
+      syncedBody.current = editorRef.current.innerHTML;
+    }
     setScopedCss(styleCss || "");
   }, []);
 
@@ -87,45 +83,32 @@ export default function WysiwygEditor({ value = "", onChange, placeholder = "Wri
   const emit = useCallback(() => {
     const body = editorRef.current?.innerHTML ?? "";
     const full = body + (styleTextRef.current || "");
+    syncedBody.current = body;
     lastHtml.current = full;
-    baselineRef.current = null;
     onChange(full);
   }, [onChange]);
 
-  // Phone keyboards (suggestion/autocorrect ones especially) hold the word
-  // being typed as "composing" text and may not send an input event for it
-  // until it's committed. Anything typed that way — a whole new line, say —
-  // never reached the saved value, so switching to the Blocks / Raw views
-  // showed the text without it. Watching the editor itself catches every
-  // change however the keyboard made it, and the editor also reports what it
-  // holds when it loses focus, ends a composition, or is switched away from.
+  // Never lose typed text. On phones the keyboard can hold a word in an
+  // unfinished composition (or commit/autocorrect it as the editor loses
+  // focus) without a final `input` event — and switching the bio editor's
+  // mode unmounts this editor in the same tap. So: emit whenever the DOM
+  // holds anything the parent hasn't been told about — when a composition
+  // ends, on blur, and as a last act on unmount (reading the detached node,
+  // which still holds its content).
   const flush = useCallback(() => {
     const el = editorRef.current;
-    if (!el) return;
-    const full = el.innerHTML + (styleTextRef.current || "");
-    if (full === lastHtml.current || full === baselineRef.current) return;
-    lastHtml.current = full;
-    baselineRef.current = null;
-    onChange(full);
-  }, [onChange]);
-
+    if (el && el.innerHTML !== syncedBody.current) emit();
+  }, [emit]);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
   useEffect(() => {
     const el = editorRef.current;
-    if (!el || typeof MutationObserver === "undefined") return undefined;
-    const report = () => {
-      const full = el.innerHTML + (styleTextRef.current || "");
-      if (full === lastHtml.current || full === baselineRef.current) return;
-      lastHtml.current = full;
-      baselineRef.current = null;
-      onChangeRef.current?.(full);
-    };
-    const mo = new MutationObserver(report);
-    mo.observe(el, { childList: true, characterData: true, subtree: true });
-    observerRef.current = mo;
     return () => {
-      mo.disconnect();
-      observerRef.current = null;
-      report(); // switching to another editing view unmounts this one
+      if (!el) return;
+      const body = el.innerHTML;
+      if (body === syncedBody.current) return;
+      syncedBody.current = body;
+      onChangeRef.current?.(body + (styleTextRef.current || ""));
     };
   }, []);
 
