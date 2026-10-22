@@ -1,0 +1,49 @@
+name: Extract os.7z
+
+on:
+  push:
+    paths: [ "os.7z", "os.zip" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install 7-Zip
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full rsync
+
+      - name: Extract archive into repo root
+        run: |
+          rm -rf /tmp/unpacked
+          mkdir /tmp/unpacked
+          if [ -f os.7z ]; then
+            7z x os.7z -o/tmp/unpacked -y
+          elif [ -f os.zip ]; then
+            7z x os.zip -o/tmp/unpacked -y
+          else
+            echo "Neither os.7z nor os.zip found in the repo root" >&2
+            exit 1
+          fi
+          # Copy into the repo root, never touching .git or .github
+          rsync -a --exclude='.git' --exclude='.github' /tmp/unpacked/ ./
+          # Delete the archive
+          rm -f os.7z os.zip
+          ls -la
+
+      - name: Commit extracted files
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing changed."
+          else
+            git commit -m "Extract archive into repo root and delete it"
+            git push
+          fi
