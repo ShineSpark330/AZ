@@ -1,6 +1,9 @@
 import React, { useState, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { SearchableMultiSelect } from "@/components/shared/SearchableSelect";
+import { taskActivityConfig } from "@/lib/dailyTaskActivity";
+import { flattenCategoryTree } from "@/lib/categoryTreeUtils";
 import { AUTO_TRIGGER_OPTIONS, DEFAULT_TASK_TEMPLATES, FREQUENCY_LABELS, WEEKDAY_LABELS, applyTerms } from "@/lib/dailyTaskSystem";
 import { useTerms } from "@/lib/useTerms";
 import { Plus, GripVertical, Pencil, Trash2, RotateCcw, X, Check } from "lucide-react";
@@ -32,6 +35,12 @@ const EMPTY_FORM = {
   auto_triggers: [],                 // new: ordered list of trigger ids
   auto_trigger_mode: "any",          // "any" (OR) | "all" (AND) — only matters when 2+
   nav_path: "",
+  activity_category_ids: [],         // MANUAL only: tapping the task records these activities…
+  activity_mode: "timed",            // …"timed" (runs for activity_minutes) | "active" (runs until ended) | "log" (logged done, nothing runs)
+  activity_minutes: "",
+  count_mode: "once",                // MANUAL only: "once" | "target" (target_count times a period) | "tally" (just counts) | "steps"
+  target_count: "",
+  steps: [],                         // [{ id, text }] for count_mode "steps"
   active_days: [],                   // daily only: which weekdays it's due (0 = Sunday); empty = every day
   reset_mode: "calendar",            // "calendar" (period / chosen weekday) | "rolling" (a full period after last completion)
   week_start_day: 1,                 // weekly + calendar: which weekday the week resets on (0 = Sunday)
@@ -46,9 +55,57 @@ function readTriggers(form) {
   return form?.auto_trigger ? [form.auto_trigger] : [];
 }
 
+// What a saved task stores about its activities. The first build's single
+// `activity_category_id` is cleared once the list takes over.
+function activityFields(form) {
+  const ids = form.mode === "MANUAL" ? (form.activity_category_ids || []).filter(Boolean) : [];
+  const mode = ["timed", "active", "log"].includes(form.activity_mode) ? form.activity_mode : "timed";
+  const minutes = Math.round(Number(form.activity_minutes) || 0);
+  return {
+    activity_category_ids: ids,
+    activity_category_id: null,
+    activity_mode: ids.length ? (mode === "timed" && minutes <= 0 ? "active" : mode) : null,
+    activity_minutes: ids.length && mode === "timed" && minutes > 0 ? minutes : null,
+  };
+}
+
+// How a saved task is completed (taskCounts.js). Step ids are kept on
+// edit so this period's ticks stay with their step.
+function countFields(form) {
+  const mode = form.mode === "MANUAL" && ["target", "tally", "steps"].includes(form.count_mode) ? form.count_mode : "once";
+  const target = Math.round(Number(form.target_count) || 0);
+  const steps = (form.steps || []).map((st) => ({ id: st.id, text: String(st.text || "").trim() })).filter((st) => st.text);
+  if (mode === "target" && target >= 2) return { count_mode: "target", target_count: target, steps: [] };
+  if (mode === "tally") return { count_mode: "tally", target_count: null, steps: [] };
+  if (mode === "steps" && steps.length) return { count_mode: "steps", target_count: null, steps };
+  return { count_mode: "once", target_count: null, steps: [] };
+}
+
+const newStepId = () => (globalThis.crypto?.randomUUID?.() || `step_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`);
+const PERIOD_WORD = { daily: "day", weekly: "week", monthly: "month", yearly: "year" };
+
 function TaskForm({ initial, onSave, onCancel, isNew }) {
-  const [form, setForm] = useState(initial || EMPTY_FORM);
+  const [form, setForm] = useState(() => {
+    if (!initial) return EMPTY_FORM;
+    // Older tasks (v0.255.0) stored one activity and no mode — show them
+    // in the current shape.
+    const cfg = taskActivityConfig(initial);
+    const base = cfg
+      ? { ...initial, activity_category_ids: cfg.categoryIds, activity_mode: cfg.mode, activity_minutes: cfg.minutes || initial.activity_minutes || "" }
+      : { ...initial, activity_category_ids: [], activity_mode: "timed" };
+    // Older tasks have no count fields — they're "once".
+    return { ...base, count_mode: base.count_mode || "once", target_count: base.target_count ?? "", steps: Array.isArray(base.steps) ? base.steps : [] };
+  });
   const terms = useTerms();
+  const { data: categories = [] } = useQuery({
+    queryKey: ["activityCategories"],
+    queryFn: () => base44.entities.ActivityCategory.list(),
+  });
+  // Nested picker (house rule: hierarchies never render as a flat select).
+  const categoryOptions = useMemo(
+    () => flattenCategoryTree(categories).map((c) => ({ id: c.id, label: c.name, color: c.color, _depth: c._depth })),
+    [categories],
+  );
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
   return (
     <div className="bg-muted/30 border border-border rounded-xl p-4 space-y-3">
@@ -238,6 +295,125 @@ function TaskForm({ initial, onSave, onCancel, isNew }) {
               value={form.nav_path || ""} onChange={(e) => set("nav_path", e.target.value)} placeholder="/page-path or https://…" />
           </div>
         )}
+        {form.mode === "MANUAL" && (() => {
+          const ids = form.activity_category_ids || [];
+          const mode = form.activity_mode || "timed";
+          const MODES = [
+            ["timed", "Timed", "Starts running for a set time, then asks how it went."],
+            ["active", "Start active", "Starts running until you end it."],
+            ["log", "Just log it", "Logs it as done now, or for today without a time."],
+          ];
+          return (
+            <div className="col-span-2 space-y-2">
+              <label className="text-xs font-medium text-muted-foreground">Activities for this task (optional)</label>
+              <SearchableMultiSelect
+                value={ids}
+                onChange={(next) => set("activity_category_ids", next || [])}
+                options={categoryOptions}
+                placeholder="No activities"
+                searchPlaceholder="Search activities…"
+                renderOption={(o) => (
+                  <span className="flex items-center gap-2 min-w-0">
+                    {o._depth > 0 && <span style={{ width: o._depth * 12 }} className="flex-shrink-0 text-muted-foreground text-xs text-right">↳</span>}
+                    {o.color && <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: o.color }} />}
+                    <span className="truncate text-sm">{o.label}</span>
+                  </span>
+                )}
+              />
+              {ids.length > 0 && (
+                <>
+                  <div role="radiogroup" aria-label="When the task is tapped" className="flex flex-wrap gap-1.5">
+                    {MODES.map(([id, label]) => (
+                      <button key={id} type="button" role="radio" aria-checked={mode === id}
+                        onClick={() => set("activity_mode", id)}
+                        className={`text-xs px-2.5 py-1 rounded-full border ${
+                          mode === id ? "border-primary text-primary bg-primary/10" : "border-border/60 text-muted-foreground hover:text-foreground"
+                        }`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {mode === "timed" && (
+                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <input type="number" min={1} max={720} inputMode="numeric"
+                        aria-label="Activity length in minutes"
+                        className="w-20 rounded-md border border-border bg-background px-2 py-2 text-sm"
+                        value={form.activity_minutes ?? ""} onChange={(e) => set("activity_minutes", e.target.value)}
+                        placeholder="min" />
+                      minutes
+                    </label>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    {MODES.find(([id]) => id === mode)?.[2]}
+                    {form.nav_path && mode !== "log" ? " The link opens at the same time." : ""}
+                  </p>
+                </>
+              )}
+            </div>
+          );
+        })()}
+        {form.mode === "MANUAL" && (() => {
+          const cm = form.count_mode || "once";
+          const period = PERIOD_WORD[form.frequency || "daily"] || "day";
+          const steps = form.steps || [];
+          const COUNT_MODES = [
+            ["once", "Once", "One tick and it's done."],
+            ["target", "Several times", `Needs doing a set number of times each ${period}. It's done when the count is reached.`],
+            ["tally", "Tally", `Counts how many times it happened this ${period}. It's done after the first one.`],
+            ["steps", "Steps", `A short checklist. It's done when every step is ticked, and the steps reset each ${period}.`],
+          ];
+          const setStep = (i, text) => set("steps", steps.map((st, j) => (j === i ? { ...st, text } : st)));
+          return (
+            <div className="col-span-2 space-y-2">
+              <label className="text-xs font-medium text-muted-foreground">How it's completed</label>
+              <div role="radiogroup" aria-label="How it's completed" className="flex flex-wrap gap-1.5">
+                {COUNT_MODES.map(([id, label]) => (
+                  <button key={id} type="button" role="radio" aria-checked={cm === id}
+                    onClick={() => setForm((p) => ({
+                      ...p, count_mode: id,
+                      ...(id === "steps" && !(p.steps || []).length ? { steps: [{ id: newStepId(), text: "" }] } : {}),
+                    }))}
+                    className={`text-xs px-2.5 py-1 rounded-full border ${
+                      cm === id ? "border-primary text-primary bg-primary/10" : "border-border/60 text-muted-foreground hover:text-foreground"
+                    }`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">{COUNT_MODES.find(([id]) => id === cm)?.[2]}</p>
+              {cm === "target" && (
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <input type="number" min={2} max={999} inputMode="numeric"
+                    aria-label={`Times per ${period}`}
+                    className="w-20 rounded-md border border-border bg-background px-2 py-2 text-sm"
+                    value={form.target_count ?? ""} onChange={(e) => set("target_count", e.target.value)}
+                    placeholder="3" />
+                  times a {period}
+                </label>
+              )}
+              {cm === "steps" && (
+                <div className="space-y-1.5">
+                  {steps.map((st, i) => (
+                    <div key={st.id} className="flex items-center gap-1.5">
+                      <span className="text-xs text-muted-foreground w-4 text-right">{i + 1}.</span>
+                      <input className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                        aria-label={`Step ${i + 1}`} value={st.text} onChange={(e) => setStep(i, e.target.value)}
+                        placeholder="What's this step?" />
+                      <button type="button" onClick={() => set("steps", steps.filter((_, j) => j !== i))}
+                        aria-label={`Remove step ${i + 1}`} className="p-1.5 rounded-md text-muted-foreground hover:text-destructive">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => set("steps", [...steps, { id: newStepId(), text: "" }])}
+                    className="text-xs text-primary flex items-center gap-1 px-1 py-1">
+                    <Plus className="w-3.5 h-3.5" /> Add a step
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })()}
         <div className="col-span-2 flex items-center gap-2">
           <input type="checkbox" id="is_active" checked={form.is_active}
             onChange={(e) => set("is_active", e.target.checked)} className="rounded" />
@@ -373,6 +549,8 @@ export default function TaskTemplateManager({ templates: propTemplates, onClose 
         ? (form.auto_trigger_mode === "all" ? "all" : "any")
         : "any",
       nav_path: form.mode === "MANUAL" ? (form.nav_path || null) : null,
+      ...activityFields(form),
+      ...countFields(form),
       reset_mode: form.reset_mode === "rolling" ? "rolling" : "calendar",
       week_start_day: (form.frequency || "daily") === "weekly" ? Number(form.week_start_day ?? 1) : null,
       active_days: (form.frequency || "daily") === "daily" && Array.isArray(form.active_days) && form.active_days.length > 0
@@ -394,6 +572,8 @@ export default function TaskTemplateManager({ templates: propTemplates, onClose 
         ? (form.auto_trigger_mode === "all" ? "all" : "any")
         : "any",
       nav_path: form.mode === "MANUAL" ? (form.nav_path || null) : null,
+      ...activityFields(form),
+      ...countFields(form),
       reset_mode: form.reset_mode === "rolling" ? "rolling" : "calendar",
       week_start_day: (form.frequency || "daily") === "weekly" ? Number(form.week_start_day ?? 1) : null,
       active_days: (form.frequency || "daily") === "daily" && Array.isArray(form.active_days) && form.active_days.length > 0

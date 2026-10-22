@@ -8,8 +8,12 @@ import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import NotificationPopups from "@/components/dashboard/NotificationPopups";
 import FloatingGroundingButton from "@/components/grounding/FloatingGroundingButton";
+import InterruptCheckNote from "@/components/needs/InterruptCheckNote";
+import ActivityPromptsHost from "@/components/activities/ActivityPromptsHost";
 import GroceryListPanel from "@/components/grocery/GroceryListPanel";
 import FrontConflictCard from "@/components/sync/FrontConflictCard";
+import ErrorBoundary from "@/components/shared/ErrorBoundary";
+import { recordCrash } from "@/lib/lastCrash";
 import QuickActionsHost from "@/components/dashboard/QuickActionsHost";
 import { useAutoDeviceSync } from "@/hooks/useAutoDeviceSync";
 import HeaderWaveBlock from "@/components/layout/HeaderWaveBlock";
@@ -29,6 +33,8 @@ import PackRestoreBar from "@/components/dashboard/PackRestoreBar";
 // installs with legacy data-URI images). Fresh installs never load it.
 const LazyBlobStorageMigrationModal = React.lazy(() => import("@/components/onboarding/BlobStorageMigrationModal"));
 import { ALL_PAGES, DEFAULT_CONFIG, applySidebarConfig } from "@/utils/navigationConfig";
+import { ModNavSync, useModPagesVersion } from "@/lib/mods/registry";
+import { useExperimentalOn } from "@/lib/experimentalFeatures";
 import { useRemindersScheduler, usePendingReminderInstances } from "@/lib/remindersScheduler";
 import { useFriendsFrontSync } from "@/lib/useFriendsFrontSync";
 import ReminderToast from "@/components/reminders/ReminderToast";
@@ -51,6 +57,7 @@ import { V2StatusLine, V2BottomChrome, V2SideRail, V2QuickDock, DisplayOptionsHo
 import { readPinnedBar } from "@/lib/barsModel";
 import { ActiveNowBubble } from "@/components/v2/ActiveNow";
 import { UI_V2_ENABLED } from "@/lib/featureFlags";
+import { safeInternalRoute } from "@/lib/safeRoute";
 
 
 const TAB_ROOTS = ["/", "/Home", "/system-checkin", "/journals", "/tasks"];
@@ -69,6 +76,21 @@ function hexToHslTripletSafe(hex) {
   if (max !== min) { const d = max - min; sat = lum > 0.5 ? d / (2 - max - min) : d / (max + min);
     if (max === r) hue = (g - b) / d + (g < b ? 6 : 0); else if (max === g) hue = (b - r) / d + 2; else hue = (r - g) / d + 4; hue /= 6; }
   return `${Math.round(hue * 360)} ${Math.round(sat * 100)}% ${Math.round(lum * 100)}%`;
+}
+
+// Hosts mounted on every page sit outside the page's own boundary, so a
+// render error in one would blank the whole app (and come straight back on
+// "Go to home screen"). Each is wrapped so it just disappears instead; the
+// trace is still kept for the bug-report form.
+function QuietBoundary({ name, children }) {
+  return (
+    <ErrorBoundary
+      fallback={() => null}
+      onError={(error, info) => recordCrash(error, info, `host:${name}`)}
+    >
+      {children}
+    </ErrorBoundary>
+  );
 }
 
 export default function AppLayout() {
@@ -209,12 +231,10 @@ export default function AppLayout() {
       // the alter's profile. One delegated listener covers every surface.
       const internal = e.target?.closest?.("a[data-internal-link]");
       if (internal) {
-        const route = internal.getAttribute("data-internal-link");
-        if (route && route.startsWith("/")) {
-          e.preventDefault();
-          navigate(route);
-          return;
-        }
+        e.preventDefault();
+        const route = safeInternalRoute(internal.getAttribute("data-internal-link"));
+        if (route) navigate(route);
+        return;
       }
       const wh = e.target?.closest?.(".whisper");
       if (wh) { wh.classList.toggle("revealed"); return; }
@@ -507,12 +527,16 @@ const termMap = useMemo(() => ({
   "system-history": `${terms.System} History`,
 }), [terms]);
 
+// Bumps when mod pages join or leave ALL_PAGES (src/lib/mods/registry.js).
+const modPagesVersion = useModPagesVersion();
+// Needs (and its interrupt note) is experimental — hidden until switched on.
+const experimentalFeaturesOn = useExperimentalOn();
 const navItems = useMemo(() => {
   return (navConfig.topBar || [])
     .map(pageId => ALL_PAGES.find(p => p.id === pageId))
     .filter(Boolean)
     .map(page => ({ ...page, label: termMap[page.id] || page.label }));
-}, [navConfig.topBar, termMap]);
+}, [navConfig.topBar, termMap, modPagesVersion]);
 
 
 const bottomNavItems = useMemo(() => {
@@ -520,7 +544,7 @@ const bottomNavItems = useMemo(() => {
     .map(pageId => ALL_PAGES.find(p => p.id === pageId))
     .filter(Boolean)
     .map(page => ({ ...page, label: termMap[page.id] || page.label }));
-}, [navConfig.bottomBar, termMap]);
+}, [navConfig.bottomBar, termMap, modPagesVersion]);
 
 // Name of the current page, for the polite screen-reader route announcer
 // below. SPA route changes are otherwise silent to assistive tech.
@@ -529,7 +553,7 @@ const routeAnnouncement = useMemo(() => {
   if (p === "/") return "Dashboard";
   const match = ALL_PAGES.find(pg => pg.path && pg.path !== "/" && p.startsWith(pg.path));
   return match ? (termMap[match.id] || match.label) : "";
-}, [location.pathname, termMap]);
+}, [location.pathname, termMap, modPagesVersion]);
 
 const { data: pendingReminders = [] } = usePendingReminderInstances();
 const pendingCount = pendingReminders.filter(i => i.status === "fired").length;
@@ -1066,6 +1090,7 @@ const handleNotifClick = (mentionLog) => {
               <div className="w-8 h-8 border-4 border-muted border-t-primary rounded-full animate-spin" aria-label="Loading page" />
             </div>
           }>
+            <QuietBoundary name="ModNavSync"><ModNavSync /></QuietBoundary>
             <Outlet context={{ setShowFeatureTour }} />
           </Suspense>
         </main>
@@ -1159,24 +1184,12 @@ const handleNotifClick = (mentionLog) => {
                 aria-label={item.label}
                 aria-current={isActive ? "page" : undefined}
                 className={cn(
-                  "flex flex-col items-center justify-center gap-0.5 flex-1 min-w-0 overflow-hidden px-0.5 min-h-[44px] py-1 select-none transition-colors",
+                  "flex flex-col items-center justify-center gap-0.5 flex-1 basis-0 min-w-0 min-h-[44px] py-1 px-0.5 select-none transition-colors",
                   isActive ? "text-primary" : "text-muted-foreground"
                 )}>
 
-                <Icon className={cn("w-5 h-5 transition-transform", isActive && "scale-110")} />
-                <span
-                  className="font-medium text-center leading-tight w-full max-w-full min-w-0"
-                  style={{
-                    fontSize: "clamp(0.5rem, 2.6vw, 0.6875rem)",
-                    overflowWrap: "anywhere",
-                    hyphens: "auto",
-                    display: "-webkit-box",
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: "vertical",
-                    overflow: "hidden",
-                  }}>
-                  {item.label}
-                </span>
+                <Icon className={cn("w-5 h-5 flex-shrink-0 transition-transform", isActive && "scale-110")} />
+                <span className="os-tab-label text-[0.6875rem] font-medium leading-tight">{item.label}</span>
               </Link>);
 
             })}
@@ -1212,9 +1225,11 @@ const handleNotifClick = (mentionLog) => {
           is redundant — but if the user hides quick actions entirely, the
           bubble comes back rather than leaving no support entry at all. */}
       {!(uiV2On && uiV2.bars.actions) && <FloatingGroundingButton />}
+      {experimentalFeaturesOn && <QuietBoundary name="InterruptCheckNote"><InterruptCheckNote /></QuietBoundary>}
       <GroceryListPanel />
+      <QuietBoundary name="ActivityPromptsHost"><ActivityPromptsHost /></QuietBoundary>
       {/* Devices that disagree about who's fronting — the person picks. */}
-      <FrontConflictCard variant="floating" />
+      <QuietBoundary name="FrontConflictCard"><FrontConflictCard variant="floating" /></QuietBoundary>
       {/* Saved Quick Actions (Shortcuts) — opens in place on any page. */}
       <QuickActionsHost />
       {!v2HomeNotices && <ReminderToast />}

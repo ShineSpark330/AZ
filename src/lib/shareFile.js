@@ -19,7 +19,7 @@
 // until the native build shipped.
 
 import { isNative } from "@/lib/platform";
-import { blobToBase64Fast } from "@/lib/blobBase64";
+import { blobToBase64, BASE64_SLICE_BYTES } from "@/lib/base64";
 
 // Returns { result, uri?, error? }
 //   result: "shared" | "downloaded" | "cancelled" | "failed"
@@ -77,11 +77,6 @@ async function shareNative(blob, filename, title, dialogTitle) {
   }
 }
 
-// Low-peak-memory base64 conversion. Same rationale as the copy in
-// nativeMediaStoreSave.js: FileReader.readAsDataURL held two full-sized
-// strings simultaneously, which OOM'd the native WebView on large
-// backups. Reading as ArrayBuffer + chunked btoa keeps only one small
-// slice in memory at a time.
 // Write a Blob to a native file in CHUNKS. Filesystem.writeFile with one
 // giant base64 string marshals the whole file across the JS↔native bridge
 // in a single JSObject — for a big backup (hundreds of images) that
@@ -89,8 +84,8 @@ async function shareNative(blob, filename, title, dialogTitle) {
 // OutOfMemoryError in Play vitals, and the "export/import just goes
 // black" reports). 3MB slices (multiple of 3 so each slice's base64
 // concatenates losslessly) keep every bridge message small.
-const CHUNK_BYTES = 6 * 1024 * 1024; // multiple of 3; fewer bridge calls than 3 MB
-async function writeBlobChunked(Filesystem, { blob, path, directory }) {
+const CHUNK_BYTES = BASE64_SLICE_BYTES;
+export async function writeBlobChunked(Filesystem, { blob, path, directory }) {
   let uri = null;
   for (let off = 0; off < blob.size; off += CHUNK_BYTES) {
     const slice = blob.slice(off, Math.min(off + CHUNK_BYTES, blob.size));
@@ -108,8 +103,6 @@ async function writeBlobChunked(Filesystem, { blob, path, directory }) {
   }
   return uri;
 }
-
-async function blobToBase64(blob) { return blobToBase64Fast(blob); }
 
 async function shareWeb(blob, filename, title, prefer = "share") {
   // `prefer`:

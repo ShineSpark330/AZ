@@ -3,9 +3,18 @@ import {
   startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval,
   format, isSameMonth, isToday,
 } from "date-fns";
-import { countableMinutes } from "@/lib/activityStatus";
+import { countableMinutes, statusFor, ACTIVITY_STATUSES } from "@/lib/activityStatus";
 import useDayRangeDrag from "@/lib/useDayRangeDrag";
-import { dayTagColor, taggedPlansForDay, textOn } from "@/lib/planTagColor";
+import { dayTagColor, taggedPlansForDay, textOn, tagRank } from "@/lib/planTagColor";
+
+// A day with a planned event takes that event's own colour — the same one its
+// "Coming up" row and the month view show — when no colour tag is set. Yearly
+// plans rank lowest, so a day with something more specific shows that instead.
+function plannedEventsWithColor(list) {
+  return (list || [])
+    .filter((a) => a?.color && statusFor(a) === ACTIVITY_STATUSES.SCHEDULED)
+    .sort((x, y) => tagRank(x) - tagRank(y) || new Date(x.timestamp) - new Date(y.timestamp));
+}
 
 function MiniMonth({ monthDate, byDay, maxMinutes, weekStartsOn, onMonthClick, onDayClick, drag }) {
   const monthStart = startOfMonth(monthDate);
@@ -40,8 +49,10 @@ function MiniMonth({ monthDate, byDay, maxMinutes, weekStartsOn, onMonthClick, o
           const today = isToday(d);
           // Plan color tag wins over the minutes heatmap: the highest-priority
           // tagged plan colors the box (time → daily → weekly → monthly → yearly).
-          const tag = inMonth ? dayTagColor(list) : null;
-          const tagNames = taggedPlansForDay(list).map((a) => a.activity_name || "Plan").join(", ");
+          const planned = inMonth ? plannedEventsWithColor(list) : [];
+          const tag = inMonth ? (dayTagColor(list) || planned[0]?.color || null) : null;
+          const tagNames = [...taggedPlansForDay(list), ...planned.filter((a) => !taggedPlansForDay(list).includes(a))]
+            .map((a) => a.activity_name || "Plan").join(", ");
           const bg = tag ? tag : !inMonth
             ? "transparent"
             : intensity > 0

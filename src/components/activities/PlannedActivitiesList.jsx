@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
-import { format, isToday, isThisWeek, isThisMonth, isThisYear, formatDistanceToNow } from "date-fns";
+import { formatSpan } from "@/lib/formatSpan";
+import { format, isToday, isThisWeek, isThisMonth, isThisYear } from "date-fns";
 import { Calendar, Clock, Users, MapPin, Zap } from "lucide-react";
 import { activityDate } from "@/lib/dateUtils";
 import { statusFor, ACTIVITY_STATUSES } from "@/lib/activityStatus";
@@ -272,8 +273,8 @@ function ActivityRow({ activity, altersById, onClick, compact, showPastStatus })
           <Clock className="w-3 h-3" />
           {format(ts, "EEE, MMM d · h:mm a")}
           {showPastStatus
-            ? <span className="opacity-70">· {formatDistanceToNow(ts, { addSuffix: true })}</span>
-            : <span className="opacity-70">· in {formatDistanceToNow(ts)}</span>}
+            ? <span className="opacity-70">· {ts.getTime() > Date.now() ? "in " : ""}{formatSpan(ts.getTime() - Date.now())}{ts.getTime() > Date.now() ? "" : " ago"}</span>
+            : <span className="opacity-70">· in {formatSpan(ts.getTime() - Date.now())}</span>}
         </p>
       </div>
       {assigned.length > 0 && (

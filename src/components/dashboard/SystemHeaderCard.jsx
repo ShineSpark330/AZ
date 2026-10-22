@@ -9,6 +9,7 @@
 // the small line under it — plus a custom display name overriding the
 // stored system name.
 
+import { formatTime } from "@/lib/timeFormat";
 import React from "react";
 import { ChevronsUpDown } from "lucide-react";
 
@@ -28,7 +29,7 @@ export default function SystemHeaderCard({ mode = "normal", api, settings = {} }
   const textOf = {
     name,
     date: now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }),
-    time: now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+    time: formatTime(now, { hour: "numeric", minute: "2-digit" }),
   };
   const [head, ...rest] = parts;
 

@@ -589,12 +589,10 @@ function StepReformation({
       <div>
         <p className="text-xs font-medium mb-1">What changes happened{alterName ? ` to ${alterName}` : ""}?</p>
         <p className="text-[0.6875rem] text-muted-foreground mb-1.5">Appearance, age, personality, role, abilities — whatever is different now.</p>
-        <textarea
-          value={whatChanged}
-          onChange={e => onWhatChanged(e.target.value)}
-          rows={3}
+        <MentionTextarea
+          value={whatChanged} onChange={onWhatChanged} alters={alters} signposts
           placeholder="e.g. Looks older, calmer, took on a protector role…"
-          className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm resize-none"
+          rows={3} className="text-sm resize-none"
         />
       </div>
 
@@ -725,6 +723,14 @@ export default function RecordSystemChangeModal({ open, onClose, preselectedAlte
       prepared = await prepareAuthoredText(notes.trim(), { alters, terms, surfaceLabel: "lineage event note", chips: false });
     } catch (e) { if (isLogCommandError(e)) { toast.error(e.message); return; } throw e; }
     if (prepared === null) return; // user backed out of the whisper warning
+    // Reformation's "what changed" answer speaks the same grammar as notes.
+    let preparedChange = null;
+    if (type === "reformation" && whatChanged.trim()) {
+      try {
+        preparedChange = await prepareAuthoredText(whatChanged.trim(), { alters, terms, surfaceLabel: "reformation change", chips: false, whisper: false });
+      } catch (e) { if (isLogCommandError(e)) { toast.error(e.message); return; } throw e; }
+      if (preparedChange === null) return;
+    }
     setSaving(true);
     try {
       let resultAlterIds = [];
@@ -768,13 +774,14 @@ export default function RecordSystemChangeModal({ open, onClose, preselectedAlte
         notes: prepared.content,
         author_alter_ids: prepared.authorIds,
         ...(type === "reformation" ? {
-          what_changed: whatChanged.trim() || null,
+          what_changed: preparedChange?.content || null,
           renamed: reformRename,
           previous_name: reformRename ? reformOldName : null,
           new_name: reformRename ? newName.trim() : null,
         } : {}),
       });
       await recordAuthoredText({ ...prepared, alters, sourceType: "lineage", sourceId: event.id, sourceLabel: "Lineage event note", navigatePath: "/system-history" });
+      if (preparedChange) await recordAuthoredText({ ...preparedChange, alters, sourceType: "lineage", sourceId: event.id, sourceLabel: "Reformation change", navigatePath: "/system-history" });
 
       // Reformation: the alter stays the same person — only optionally take the new name.
       if (reformRename && applyRename) {

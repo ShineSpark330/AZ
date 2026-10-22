@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { X, ZoomIn, ZoomOut, Maximize2, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useResolvedAvatarUrl } from "@/hooks/useResolvedAvatarUrl";
-import { formatBytes } from "@/lib/mediaStore";
+import { formatBytes } from "@/lib/assetFiles";
 
 // Full-screen image viewer: pinch / wheel / double-tap zoom, drag to pan, and a
 // quality choice for the DISPLAYED copy —

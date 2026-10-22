@@ -47,7 +47,7 @@ export const DEFAULT_UI_V2 = {
 export const V2_REGISTERS = [
   { id: "status",  label: "Home",      icon: Home,          path: "/",            match: [] },
   { id: "log",     label: "Records",   icon: ClipboardList, path: "/checkin-log", match: ["/checkin-log", "/location-history", "/sleep", "/system-checkin", "/diary"] },
-  { id: "plan",    label: "Planner",   icon: CalendarDays,  path: "/activities",  match: ["/activities", "/todo", "/tasks"] },
+  { id: "plan",    label: "Planner",   icon: CalendarDays,  path: "/planner",  match: ["/planner", "/activities", "/todo", "/tasks"] },
   { id: "roster",  labelTermKey: "Alters", icon: Users,     path: "/Home",        match: ["/Home", "/alter", "/groups", "/group", "/system-map", "/system-history", "/presences", "/unblend", "/get-to-know-me", "/contacts", "/location"] },
   { id: "comms",   label: "Social",    icon: MessageSquare, path: "/chat",        match: ["/chat", "/bulletins", "/bulletin", "/polls", "/friends"] },
   { id: "archive", label: "Journal",   icon: BookOpen,      path: "/journals",    match: ["/journals", "/assets"] },
@@ -103,7 +103,6 @@ export const V2_COMMAND_KEYS = [
 // flexible gap — arrange it to choose where the bar splits left/right.
 export const V2_TOP_BAR_ITEMS = [
   { id: "name",     labelKey: "editSheet.topItem.name" },
-  { id: "presence", labelKey: "editSheet.topItem.presence" },
   { id: "spacer",   labelKey: "editSheet.topItem.spacer" },
   { id: "clock",    labelKey: "editSheet.topItem.clock" },
   { id: "search",   labelKey: "editSheet.topItem.search" },

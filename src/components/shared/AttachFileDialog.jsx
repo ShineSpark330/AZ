@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, Check, Loader2, Film, Music, File as FileIcon, Sparkles } from "lucide-react";
-import { classifyMedia, formatBytes, MEDIA_FOLDER_FOR_KIND } from "@/lib/mediaStore";
+import { classifyFile, formatBytes, SAVE_SUBFOLDERS, MAX_FILE_BYTES } from "@/lib/assetFiles";
 
 // Shown between "the person picked a file" and "it lands in the message".
 //
@@ -62,7 +62,7 @@ function encode(bitmap, preset, mime) {
 function pct(saved, total) { return total > 0 ? Math.round((saved / total) * 100) : 0; }
 
 export default function AttachFileDialog({ file, onConfirm, onCancel }) {
-  const kind = useMemo(() => classifyMedia(file?.type, file?.name), [file]);
+  const kind = useMemo(() => classifyFile(file?.type, file?.name), [file]);
   const isRasterImage = kind === "image" && !/image\/(gif|svg\+xml)/i.test(file?.type || "") && !/\.(gif|svg)$/i.test(file?.name || "");
   const isGif = kind === "image" && (/image\/gif/i.test(file?.type || "") || /\.gif$/i.test(file?.name || ""));
 
@@ -126,7 +126,11 @@ export default function AttachFileDialog({ file, onConfirm, onCancel }) {
   if (!file) return null;
 
   const chosen = options.find((o) => o.id === choice);
-  const folder = MEDIA_FOLDER_FOR_KIND[kind] || "Others";
+  const folder = SAVE_SUBFOLDERS[kind] || "Files";
+  // Every stored file rides backups and the app's private-file copy, so the
+  // same cap as an Assets upload applies.
+  const tooBig = (chosen ? chosen.blob.size : file.size) > MAX_FILE_BYTES;
+  const capMb = Math.round(MAX_FILE_BYTES / (1024 * 1024));
 
   const confirm = () => {
     try { localStorage.setItem(SAVE_COPY_KEY, saveCopy ? "1" : "0"); } catch { /* noop */ }
@@ -200,8 +204,13 @@ export default function AttachFileDialog({ file, onConfirm, onCancel }) {
           <div className="rounded-xl border border-border/50 bg-muted/10 px-3 py-2 text-xs text-muted-foreground space-y-0.5">
             <p><span className="font-medium text-foreground">{formatBytes(file.size)}</span>{file.type ? ` · ${file.type}` : ""}</p>
             <p>{isGif ? "GIFs are kept as-is so they keep animating." : "Stored as the original file — no compression."}</p>
-            {file.size > 500 * 1024 * 1024 && <p className="text-amber-600">Very large: it will use this much space on your device.</p>}
           </div>
+        )}
+
+        {tooBig && (
+          <p className="text-xs text-destructive">
+            This is over {capMb} MB, so it can&apos;t be stored in the app{isRasterImage ? " — pick a compressed size" : ""}.
+          </p>
         )}
 
         <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
@@ -212,7 +221,7 @@ export default function AttachFileDialog({ file, onConfirm, onCancel }) {
         <div className="flex gap-2 pt-1">
           <button type="button" onClick={onCancel}
             className="flex-1 py-2 rounded-lg text-sm border border-border/60 text-muted-foreground hover:text-foreground">Cancel</button>
-          <button type="button" onClick={confirm} disabled={computing && isRasterImage && choice !== "original"}
+          <button type="button" onClick={confirm} disabled={tooBig || (computing && isRasterImage && choice !== "original")}
             className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
             <Check className="w-3.5 h-3.5" /> {chosen ? "Use compressed" : "Use original"}
           </button>

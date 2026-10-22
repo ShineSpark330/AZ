@@ -16,8 +16,8 @@
 // CUSTOMIZATION: nothing visual is hardcoded — sizes/colors read --v2-*
 // tokens from uiV2.js, edited live in Display options.
 
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { syllableSplit } from "@/lib/syllableSplit";
+import { useTimeFormat, formatTime } from "@/lib/timeFormat";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -46,6 +46,7 @@ import { applyTerms } from "@/lib/dailyTaskSystem";
 import { useT } from "@/lib/i18n";
 import { ALL_PAGES, DEFAULT_CONFIG } from "@/utils/navigationConfig";
 import { buildNavGroups } from "@/lib/navCatalogue";
+import { useModPagesVersion } from "@/lib/mods/registry";
 import HeaderWaveBlock from "@/components/layout/HeaderWaveBlock";
 import SidebarNav from "@/components/layout/SidebarNav";
 import HeaderPageMenu from "@/components/layout/HeaderPageMenu";
@@ -151,12 +152,13 @@ export function requestClassicHomeAction(navigate, pathname) {
 }
 
 function useClock() {
+  const format = useTimeFormat();
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(id);
   }, []);
-  return now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return formatTime(now, { hour: "2-digit", minute: "2-digit" }, format);
 }
 
 // ── Display options ────────────────────────────────────────────────
@@ -370,23 +372,9 @@ export function V2StatusLine({ settingsRow, uiV2, classicHost = false }) {
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const { data: activeSessions = [] } = useQuery({
-    queryKey: ["activeFront"],
-    queryFn: () => base44.entities.FrontingSession.filter({ is_active: true }),
-  });
   const { data: alters = [] } = useQuery({ queryKey: ["alters"], queryFn: () => base44.entities.Alter.list() });
   const { data: mentionLogs = [] } = useQuery({ queryKey: ["mentionLogs"], queryFn: () => base44.entities.MentionLog.list("-created_date", 200) });
 
-  const altersById = useMemo(() => Object.fromEntries(alters.map((a) => [a.id, a])), [alters]);
-  const fronters = activeSessions
-    .map((s) => ({ s, alter: altersById[s.alter_id || s.primary_alter_id] }))
-    .filter((x) => x.alter)
-    .sort((a, b) => (b.s.is_primary === true) - (a.s.is_primary === true));
-  const presenceText = fronters.length === 0
-    ? applyTerms(t("top.noFronter"), terms)
-    : fronters.length === 1
-      ? formatAlter(fronters[0].alter)
-      : `${formatAlter(fronters[0].alter)} +${fronters.length - 1}`;
   const hasUnread = mentionLogs.some((m) => m.is_active !== false && !m.seen && !m.read);
 
   const openOptions = () => window.dispatchEvent(new CustomEvent("os-open-display-options"));
@@ -444,27 +432,10 @@ export function V2StatusLine({ settingsRow, uiV2, classicHost = false }) {
             // The name opens the SYSTEM SWITCHER (owner spec) — switch,
             // side systems, create. Home stays a tab/gesture away.
             <button key={id} type="button" onClick={() => openSystemSwitcher()}
-              className="font-semibold text-sm truncate max-w-[34%] text-left flex-shrink"
+              className="font-semibold text-sm text-left min-w-0 flex-shrink whitespace-normal break-words leading-tight py-1"
               aria-label={`${settingsRow?.system_name || terms.System} — switch or manage ${terms.systems || "systems"}`}
               title={`Switch or manage ${terms.systems || "systems"}`}>
               {settingsRow?.system_name || terms.System}
-            </button>
-          );
-          if (id === "presence") return (
-            // Who's here → the Set Fronters window. The Dashboard hosts
-            // the sheet, so away from home this navigates in with the
-            // action param — same route the quick-action key takes.
-            <button key={id} type="button"
-              onClick={() => {
-                if (location.pathname === "/") window.dispatchEvent(new CustomEvent("open-set-front"));
-                else navigate("/?action=set-front");
-              }}
-              className="flex items-center gap-1.5 min-w-0 text-xs text-muted-foreground flex-shrink"
-              aria-label={`${presenceText} — ${applyTerms(t("capture.front"), terms)}`}
-              title={applyTerms(t("capture.front"), terms)}>
-              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                style={{ background: fronters.length ? "var(--v2-accent)" : "hsl(var(--muted-foreground))" }} />
-              <span className="truncate">{presenceText}</span>
             </button>
           );
           if (id === "active") return <ActiveNowChip key={id} />;
@@ -584,6 +555,7 @@ export function V2StatusLine({ settingsRow, uiV2, classicHost = false }) {
 function useNavItems(settingsRow) {
   const terms = useTerms();
   const navConfig = settingsRow?.navigation_config || DEFAULT_CONFIG;
+  const modNavV = useModPagesVersion();
   const termMap = useMemo(() => ({
     alters: terms.Alters,
     checkin: `${terms.System} Meeting`,
@@ -595,7 +567,7 @@ function useNavItems(settingsRow) {
     .filter(Boolean)
     .map((p) => ({ ...p, label: termMap[p.id] || p.label }));
   const primaryIds = navConfig.bottomBar || DEFAULT_CONFIG.bottomBar;
-  const primary = useMemo(() => resolve(primaryIds), [primaryIds, termMap]);
+  const primary = useMemo(() => resolve(primaryIds), [primaryIds, termMap, modNavV]);
   // The rail has room the bottom bar doesn't — everything else the user has
   // chosen for their dashboard goes underneath, so desktop isn't limited to
   // five destinations.
@@ -607,7 +579,7 @@ function useNavItems(settingsRow) {
     return Object.entries(raw)
       .map(([label, items]) => ({ label, items: items.filter((i) => !primaryIds.includes(i.id)) }))
       .filter((g) => g.items.length > 0);
-  }, [terms.Alters, terms.System, primaryIds]);
+  }, [terms.Alters, terms.System, primaryIds, modNavV]);
   return { primary, groups };
 }
 
@@ -1110,41 +1082,6 @@ function useHomeEditMode() {
 
 // The page-tab row's contents — one implementation for the fixed bottom
 // bar AND the fold-out strip when the bars are swapped (reuse, don't fork).
-// Bottom-tab label. One line when it fits; when it doesn't (wide custom fonts),
-// it breaks at a SYLLABLE — "Head-" / "space", never "Headsp-" / "ace" — or at
-// an existing space / hyphen ("Check-In" / "Log").
-function TabLabel({ label }) {
-  const boxRef = useRef(null);
-  const ghostRef = useRef(null);
-  const [tight, setTight] = useState(false);
-  useLayoutEffect(() => {
-    const check = () => {
-      const b = boxRef.current, g = ghostRef.current;
-      if (b && g) setTight(g.offsetWidth > b.clientWidth + 1);
-    };
-    check();
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(check) : null;
-    if (ro && boxRef.current) ro.observe(boxRef.current);
-    document.fonts?.ready?.then(check);
-    return () => ro?.disconnect();
-  }, [label]);
-
-  let lines = [label];
-  if (tight) {
-    const words = String(label).trim().split(/\s+/);
-    if (words.length > 1) lines = [words.slice(0, -1).join(" "), words[words.length - 1]];
-    else if (label.includes("-")) { const i = label.indexOf("-"); lines = [label.slice(0, i + 1), label.slice(i + 1)]; }
-    else { const sp = syllableSplit(label); if (sp) lines = [sp[0] + "-", sp[1]]; }
-  }
-  const font = { fontSize: "clamp(0.5rem, 2.5vw, 0.625rem)" };
-  return (
-    <span ref={boxRef} className="block font-medium leading-[1.05] w-full min-w-0 text-center relative" style={font}>
-      <span ref={ghostRef} aria-hidden="true" className="absolute invisible whitespace-nowrap pointer-events-none left-0 top-0">{label}</span>
-      {lines.map((ln, i) => <span key={i} className="block truncate">{ln}</span>)}
-    </span>
-  );
-}
-
 function TabButtons({ items, uiV2, isActive, navigate, t }) {
   return (
     <div className="flex items-stretch overflow-x-auto w-full" style={{ height: "var(--v2-strip-h)" }} role="tablist" aria-label={t("nav.appNav")}>
@@ -1154,13 +1091,13 @@ function TabButtons({ items, uiV2, isActive, navigate, t }) {
         return (
           <button key={item.id} type="button" role="tab" aria-selected={on}
             onClick={() => navigate(item.path)}
-            className="flex-1 basis-0 min-w-0 overflow-hidden flex flex-col items-center justify-center gap-0.5 px-0.5"
+            className="flex-1 basis-0 min-w-[56px] flex flex-col items-center justify-center gap-0.5 px-1 overflow-hidden"
             style={{
               color: on ? "var(--v2-accent)" : "hsl(var(--muted-foreground))",
               boxShadow: on ? "inset 0 calc(var(--v2-border-w) + 1px) 0 var(--v2-accent)" : "none",
             }}>
-            <IconSlot override={uiV2.icons?.pages?.[item.id]} Default={Icon} style={{ width: 18, height: 18 }} />
-            <TabLabel label={item.label} />
+            <IconSlot override={uiV2.icons?.pages?.[item.id]} Default={Icon} style={{ width: 18, height: 18, flexShrink: 0 }} />
+            <span className="os-tab-label text-[0.625em] font-medium leading-tight">{item.label}</span>
           </button>
         );
       })}

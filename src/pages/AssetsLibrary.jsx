@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import MediaPlayer from "@/components/shared/MediaPlayer";
+import MediaTuningPanel from "@/components/shared/MediaTuningPanel";
+import { useMediaTuning } from "@/lib/mediaTuning";
 import { confirm, promptText } from "@/components/shared/ConfirmDialog";
 import { useSearchParams } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
@@ -7,107 +10,102 @@ import { toast } from "sonner";
 import {
   Images, Upload, Loader2, Trash2, Pencil, FolderInput, FolderPlus, Search, SlidersHorizontal,
   ChevronRight, ArrowUp, ArrowDown, X, UserPlus2, Users, ArrowLeft, CheckSquare, Check, Folder,
-  Download, Film, Music, File as FileIcon, Cloud, CloudOff, Info,
+  Download, Film, Music, FileText, Play, Info, Cloud, CloudOff,
 } from "lucide-react";
 import ImageViewer from "@/components/shared/ImageViewer";
-import MediaViewerDialog from "@/components/shared/MediaViewerDialog";
 import AssetInfoDialog from "@/components/shared/AssetInfoDialog";
+import { skipKeyForImage, setBackupSkipKeys, skipSetFromSettings } from "@/lib/backupSkip";
 import AlterSearchSelect from "@/components/shared/AlterSearchSelect";
 import SearchableSelect from "@/components/shared/SearchableSelect";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useResolvedAvatarUrl } from "@/hooks/useResolvedAvatarUrl";
 import { useTerms } from "@/lib/useTerms";
+import { deleteLocalImageIfUnused } from "@/lib/localImageUsage";
 import { useReferencedAssets, useImageUsage, BUILT_IN_FOLDER } from "@/lib/referencedAssets";
 import {
-  getAllLocalImages, deleteLocalImage, getLocalImageId, isLocalImageUrl,
+  listLocalImageMeta, getLocalImageId, isLocalImageUrl,
   processUploadedImage, saveLocalImage, createLocalImageUrl,
 } from "@/lib/localImageStorage";
-import { isLocalMode } from "@/lib/storageMode";
-import { skipKeyForImage, skipKeyForMedia, setBackupSkipKeys } from "@/lib/backupSkip";
 import {
-  listMedia, getMedia, renameMedia, deleteMedia, saveMedia, playableBlob, formatBytes,
-  classifyMedia, nameWithRealExt,
-} from "@/lib/mediaStore";
-import { getLocalImage, dataUrlToBlob } from "@/lib/localImageStorage";
-import { saveBlobToDeviceFolder, describeSaveResult } from "@/lib/saveToDevice";
+  assetKind, resolveMime, extForMime, saveAssetToDevice, findStoredFileUses, MAX_FILE_BYTES, classifyFile,
+} from "@/lib/assetFiles";
+import { isLocalMode } from "@/lib/storageMode";
 
 // Auto-folder names + the user's overrides live in lib/assetFolders.js
 // (shared with the picker so both file an image the same way).
 import {
-  resolveAssetRules, autoFolderFor as autoFolderForRules, autoFolderNames,
+  resolveAssetRules, autoFolderNames,
   ALTER_FOLDER_PREFIX, alterFolderName as alterFolderNameRules, DEFAULT_PREFIX_FOLDERS, PREFIX_LABELS,
+  autoFolderForItem, explicitFolderOf, kindFolderFor,
+  VIDEOS_FOLDER, AUDIO_FOLDER, OTHERS_FOLDER, SONGS_AUDIO_FOLDER, UNORGANIZED_FOLDER, BUILT_IN_KIND_FOLDERS,
 } from "@/lib/assetFolders";
 const ORDER_KEY = "asset_folder_order_v1";     // user-created folder order (incl. empty)
 const PAGE = 24; // lazy-load page size per folder
-// Videos, audio and any other file attached in chat (or uploaded here). It is the
-// SAME store the chat reads, so a file attached in chat shows up here and a file
-// deleted here disappears from chat.
-const AUDIO_FOLDER = "Audio";
-// Any other attached file (documents, archives…) — neither audio nor video.
-const OTHERS_FOLDER = "Others";
-// Songs uploaded through a song widget / profile song live in the picture store.
-const SONGS_AUDIO_FOLDER = "Songs Audio";
-// Where a deleted folder's files go when the user keeps them. Built in, so it
-// can't be renamed or deleted like a folder the user made.
-const UNORGANIZED_FOLDER = "Unorganized";
-const mediaFolderFor = (kind) => (kind === "video" ? VIDEOS_FOLDER : kind === "audio" ? AUDIO_FOLDER : OTHERS_FOLDER);
-// Videos get a folder of their own — never mixed in with other attached files.
-const VIDEOS_FOLDER = "Videos";
 
 const loadArr = (k) => { try { return JSON.parse(localStorage.getItem(k) || "[]"); } catch { return []; } };
 const saveArr = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* off */ } };
 
-// Face for a video / audio / file tile. A video shows a frame from itself;
-// audio and other files show an icon (and the size) — never a broken image.
-function MediaFace({ item }) {
-  const [poster, setPoster] = useState(null);
-  useEffect(() => {
-    if (!item.isMedia || item.kind !== "video") return undefined;
-    let alive = true;
-    let u = null;
-    (async () => {
-      try {
-        const rec = await getMedia(item.mediaId);
-        if (!alive || !rec) return;
-        u = URL.createObjectURL(playableBlob(rec));
-        setPoster(u);
-      } catch { /* icon only */ }
-    })();
-    return () => { alive = false; if (u) URL.revokeObjectURL(u); };
-  }, [item.isMedia, item.kind, item.mediaId]);
-  const Icon = item.kind === "video" ? Film : item.kind === "audio" ? Music : FileIcon;
+const KIND_ICON = { video: Film, audio: Music, file: FileText, image: Images };
+const KIND_WORD = { video: "video", audio: "audio file", file: "file", image: "image" };
+
+const formatSize = (n) => {
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+// One small icon button on a tile — always titled + aria-labelled.
+function TileButton({ icon: Icon, label, onClick, danger = false, disabled = false, disabledTitle, active = false }) {
   return (
-    <span className="relative w-full h-full flex flex-col items-center justify-center gap-1 text-muted-foreground">
-      {poster && <video src={`${poster}#t=0.1`} preload="metadata" muted playsInline className="absolute inset-0 w-full h-full object-cover" />}
-      <span className={poster ? "relative rounded-full bg-black/50 p-1.5 text-white" : ""}><Icon className="w-5 h-5" /></span>
-      {item.size ? <span className={`relative text-[0.5625rem] tabular-nums ${poster ? "px-1 rounded bg-black/50 text-white" : ""}`}>{formatBytes(item.size)}</span> : null}
-    </span>
+    <button type="button" onClick={onClick} disabled={disabled}
+      title={disabled && disabledTitle ? disabledTitle : label} aria-label={label}
+      {...(active ? { "aria-pressed": true } : {})}
+      className={`p-1 rounded hover:bg-muted/60 disabled:opacity-35 disabled:hover:bg-transparent disabled:cursor-not-allowed ${active ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"} ${danger ? "hover:text-destructive" : "hover:text-foreground"}`}>
+      <Icon className="w-3.5 h-3.5" />
+    </button>
   );
 }
 
-const ICON_BTN = "p-1.5 rounded text-muted-foreground hover:bg-muted/60";
+// A video tile shows a frame from the video itself (metadata only — the
+// whole file isn't loaded); audio and other files show an icon.
+function VideoPoster({ url }) {
+  const src = useResolvedAvatarUrl(url);
+  if (!src) return null;
+  return <video src={`${src}#t=0.1`} preload="metadata" muted playsInline aria-hidden="true" tabIndex={-1}
+    className="absolute inset-0 w-full h-full object-cover pointer-events-none" />;
+}
 
-function Thumb({ item, onSaveToLibrary, onRename, onMove, onDelete, onSaveDevice, onToggleBackup, backupSkipped = false, selecting = false, selected = false, onToggle, showFolder = false }) {
-  const resolved = useResolvedAvatarUrl(item.url);
+function Thumb({ item, onOpen, onRename, onSave, onMove, onDelete, moveBlockedTitle, backupSkipped = false, onToggleBackup, selecting = false, selected = false, onToggle, showFolder = false }) {
+  // Only pictures are drawn as pictures — a song or video "as an image"
+  // was a broken-picture icon.
+  const isImage = item.kind === "image";
+  const resolved = useResolvedAvatarUrl(isImage ? item.url : null);
+  const [panel, setPanel] = useState(null); // "view" | "info" | null
+  const KindIcon = KIND_ICON[item.kind] || FileText;
   // Pictures only referenced by a record / built into the app can't be
   // moved or deleted from here — in select mode they're dimmed, not pickable.
   const pickable = !item.refOnly;
-  const isMediaTile = item.isMedia || item.kind === "audio" || item.kind === "video";
-  // Tap a tile to look at it: pictures open the zoom viewer, audio / video open a
-  // player with tempo & pitch. (Other attached files have nothing to open.)
-  const [openPanel, setOpenPanel] = useState(null); // "view" | "play" | "info" | null
-  const canOpen = isMediaTile ? (item.kind === "audio" || item.kind === "video") : !!resolved;
+  const ext = !isImage ? (extForMime(item.mime) || (/\.([A-Za-z0-9]{1,6})$/.exec(item.asset?.file_name || "") || [])[1] || "") : "";
   const image = (
     <div className={`relative w-full aspect-square rounded-lg overflow-hidden border bg-muted/30 ${
       selected ? "border-primary ring-2 ring-primary" : "border-border/50"} ${selecting && !pickable ? "opacity-40" : ""}`}>
-      {isMediaTile
-        ? <MediaFace item={item} />
-        : resolved
+      {isImage
+        ? (resolved
           ? <img src={resolved} alt={item.name} className="w-full h-full object-cover" loading="lazy" />
-          : <span className="w-full h-full flex items-center justify-center text-muted-foreground"><Images className="w-5 h-5" /></span>}
+          : <span className="w-full h-full flex items-center justify-center text-muted-foreground"><Images className="w-5 h-5" /></span>)
+        : (
+          <span className="relative w-full h-full flex flex-col items-center justify-center gap-1 text-muted-foreground">
+            {item.kind === "video" && <VideoPoster url={item.url} />}
+            <span className={item.kind === "video" ? "relative rounded-full bg-black/50 p-1.5 text-white" : ""}>
+              <KindIcon className={item.kind === "video" ? "w-5 h-5" : "w-7 h-7 text-primary/80"} />
+            </span>
+            {ext && <span className={`relative text-[0.5625rem] font-semibold uppercase tracking-wide ${item.kind === "video" ? "px-1 rounded bg-black/50 text-white" : ""}`}>{ext}</span>}
+            {item.kind === "video" && !selecting && <Play className="absolute bottom-1.5 right-1.5 w-3.5 h-3.5 text-white drop-shadow" />}
+          </span>
+        )}
       {item.isGif && <span className="absolute top-1 left-1 text-[0.5rem] font-bold px-1 rounded bg-black/60 text-white">GIF</span>}
-      {backupSkipped && <span title="Skipped in backups" className="absolute bottom-1 left-1 rounded-full bg-black/60 text-white p-0.5"><CloudOff className="w-3 h-3" /></span>}
+      {backupSkipped && <span title="Left out of backups" className="absolute bottom-1 left-1 rounded-full bg-black/60 text-white p-0.5"><CloudOff className="w-3 h-3" /></span>}
       {selecting && pickable && (
         <span className={`absolute top-1 right-1 w-5 h-5 rounded-full border-2 flex items-center justify-center ${
           selected ? "bg-primary border-primary text-primary-foreground" : "bg-black/40 border-white/80"}`}>
@@ -123,66 +121,104 @@ function Thumb({ item, onSaveToLibrary, onRename, onMove, onDelete, onSaveDevice
           aria-label={`${selected ? "Deselect" : "Select"} ${item.name}`} className="block w-full text-left">
           {image}
         </button>
-      ) : canOpen ? (
-        <button type="button" onClick={() => setOpenPanel(isMediaTile ? "play" : "view")}
-          aria-label={`${isMediaTile ? "Play" : "View"} ${item.name}`} className="block w-full text-left">
+      ) : !isImage ? (
+        <button type="button" onClick={() => onOpen(item)} aria-label={`Open ${item.name}`} className="block w-full text-left">
+          {image}
+        </button>
+      ) : resolved ? (
+        // Pictures open full screen, with zoom.
+        <button type="button" onClick={() => setPanel("view")} aria-label={`View ${item.name}`} className="block w-full text-left">
           {image}
         </button>
       ) : image}
-      <p className="text-[0.625rem] text-muted-foreground truncate mt-0.5 px-0.5">{item.name}</p>
+      <p className="text-[0.625rem] text-muted-foreground truncate mt-0.5 px-0.5" title={item.name}>{item.name}</p>
       {showFolder && <p className="text-[0.5625rem] text-muted-foreground/70 truncate px-0.5">{item.folder}</p>}
       {!selecting && (
-        // Icon-only actions (labels are tooltips / screen-reader text) so they
-        // never wrap or overlap, whatever font is in use.
         <div className="mt-1 flex flex-wrap items-center justify-center gap-0.5">
-          <button type="button" onClick={() => setOpenPanel("info")} title="Info" aria-label={`Details for ${item.name}`} className={`${ICON_BTN} hover:text-foreground`}><Info className="w-3.5 h-3.5" /></button>
-          {!item.refOnly && (
-            <button type="button" onClick={() => onRename(item)} title="Rename" aria-label={`Rename ${item.name}`} className={`${ICON_BTN} hover:text-foreground`}><Pencil className="w-3.5 h-3.5" /></button>
+          <TileButton icon={Info} label={`Details for ${item.name}`} onClick={() => setPanel("info")} />
+          <TileButton icon={Pencil} label={`Rename ${item.name}`} onClick={() => onRename(item)} />
+          <TileButton icon={Download} label={`Save ${item.name} to device`} onClick={() => onSave(item)} />
+          {onToggleBackup && (
+            <TileButton icon={backupSkipped ? CloudOff : Cloud} onClick={() => onToggleBackup(item)}
+              label={backupSkipped ? `Include ${item.name} in backups again` : `Leave ${item.name} out of backups`}
+              active={backupSkipped} />
           )}
-          <button type="button" onClick={() => onSaveDevice(item)} title="Save to device" aria-label={`Save ${item.name} to device`} className={`${ICON_BTN} hover:text-foreground`}><Download className="w-3.5 h-3.5" /></button>
-          {!item.refOnly && onToggleBackup && (
-            <button type="button" onClick={() => onToggleBackup(item)} aria-pressed={backupSkipped}
-              title={backupSkipped ? "Skipped in backups — tap to include it again" : "Included in backups — tap to skip it"}
-              aria-label={backupSkipped ? `Include ${item.name} in backups` : `Skip ${item.name} in backups`}
-              className={`${ICON_BTN} ${backupSkipped ? "text-amber-600 dark:text-amber-400" : "hover:text-foreground"}`}>
-              {backupSkipped ? <CloudOff className="w-3.5 h-3.5" /> : <Cloud className="w-3.5 h-3.5" />}
-            </button>
-          )}
-          {item.isMedia ? null : item.refOnly ? (
-            // In use on a record / built into the app — can be copied into the
-            // library (to name / organise / reuse), not deleted from here.
-            <button type="button" onClick={() => onSaveToLibrary(item)} title="Save a copy to the library" aria-label="Save a copy to the library" className={`${ICON_BTN} hover:text-primary`}><FolderPlus className="w-3.5 h-3.5" /></button>
-          ) : item.asset?.owner_alter_id ? null : item.asset ? (
-            <button type="button" onClick={() => onMove(item)} title="Move to folder" aria-label="Move to folder" className={`${ICON_BTN} hover:text-foreground`}><FolderInput className="w-3.5 h-3.5" /></button>
-          ) : (
-            <button type="button" onClick={() => onSaveToLibrary(item)} title="Save to library (name & organise it)" aria-label="Save to library" className={`${ICON_BTN} hover:text-primary`}><FolderPlus className="w-3.5 h-3.5" /></button>
-          )}
-          {!item.refOnly && (
-            <button type="button" onClick={() => onDelete(item)} title="Delete" aria-label={`Delete ${item.name}`} className={`${ICON_BTN} hover:text-destructive`}><Trash2 className="w-3.5 h-3.5" /></button>
-          )}
+          <TileButton icon={FolderInput} label={`Move ${item.name} to a folder`} onClick={() => onMove(item)}
+            disabled={!!moveBlockedTitle} disabledTitle={moveBlockedTitle} />
+          <TileButton icon={Trash2} label={`Delete ${item.name}`} onClick={() => onDelete(item)} danger
+            disabled={!!item.refOnly} disabledTitle="In use on a record, not stored in Assets — change it where it's used" />
         </div>
       )}
-      {openPanel === "view" && <ImageViewer open src={item.url} name={item.name} isGif={item.isGif} onClose={() => setOpenPanel(null)} />}
-      {openPanel === "play" && <MediaViewerDialog item={item} onClose={() => setOpenPanel(null)} />}
-      {openPanel === "info" && <AssetInfoDialog item={item} backupSkipped={backupSkipped} onClose={() => setOpenPanel(null)} />}
+      {panel === "view" && <ImageViewer open src={resolved || item.url} name={item.name} isGif={item.isGif} onClose={() => setPanel(null)} />}
+      {panel === "info" && <AssetInfoDialog item={item} backupSkipped={backupSkipped} onClose={() => setPanel(null)} />}
     </div>
   );
 }
 
-// A folder in the folder grid: its first image as the cover, name, count.
+// A song or video played from the library, with the same controls (seek,
+// loop, full screen) and tempo & pitch panel the chat player has.
+function StoredMedia({ item, src }) {
+  const ref = useRef(null);
+  const tuning = useMediaTuning(ref, item.key || item.id || item.url);
+  return (
+    <div className="w-full rounded-xl border border-border/50 bg-muted/20 p-2 space-y-1.5">
+      <MediaPlayer mediaRef={ref} src={src} kind={item.kind === "video" ? "video" : "audio"} tuning={tuning} />
+      <MediaTuningPanel tuning={tuning} />
+    </div>
+  );
+}
+
+// A song, video or file opened from its tile: play it here, or save it.
+function PreviewDialog({ item, onClose, onSave }) {
+  const src = useResolvedAvatarUrl(item.kind === "audio" || item.kind === "video" ? item.url : null);
+  const KindIcon = KIND_ICON[item.kind] || FileText;
+  const size = formatSize(item.size);
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogTitle className="text-sm flex items-center gap-1.5 min-w-0 pr-6">
+          <KindIcon className="w-4 h-4 flex-shrink-0 text-primary" /> <span className="truncate">{item.name}</span>
+        </DialogTitle>
+        {item.kind === "video" && (src
+          ? <StoredMedia item={item} src={src} />
+          : <p className="text-xs text-muted-foreground">This video isn&apos;t stored on this device.</p>)}
+        {item.kind === "audio" && (src
+          ? <StoredMedia item={item} src={src} />
+          : <p className="text-xs text-muted-foreground">This audio isn&apos;t stored on this device.</p>)}
+        {item.kind === "file" && (
+          <div className="flex flex-col items-center gap-1 py-6 text-muted-foreground">
+            <FileText className="w-10 h-10 text-primary/80" />
+            <p className="text-xs">{(extForMime(item.mime) || "file").toUpperCase()}{size ? ` · ${size}` : ""}</p>
+          </div>
+        )}
+        <p className="text-[0.6875rem] text-muted-foreground">{item.folder}{size && item.kind !== "file" ? ` · ${size}` : ""}</p>
+        <button type="button" onClick={() => onSave(item)}
+          className="h-9 rounded-lg bg-primary text-primary-foreground text-sm font-medium flex items-center justify-center gap-1.5">
+          <Download className="w-4 h-4" /> Save to device
+        </button>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// A folder in the folder grid: its first picture as the cover, name, count.
+const FOLDER_ICONS = { [VIDEOS_FOLDER]: Film, [AUDIO_FOLDER]: Music, [SONGS_AUDIO_FOLDER]: Music, [OTHERS_FOLDER]: FileText };
+
+// In select mode a folder the person made can be ticked (to delete it); the
+// built-in folders still just open.
 function FolderTile({ name, items, onOpen, selecting = false, selectable = false, selected = false, onToggle }) {
-  // Audio and video items have no picture to show (an <img> of a song is a broken icon).
-  const cover = items.find((i) => i.url && i.kind !== "audio" && i.kind !== "video" && !i.isMedia && !String(i.id).startsWith("song-"))?.url || "";
+  const cover = items.find((i) => i.url && i.kind === "image")?.url || "";
   const resolved = useResolvedAvatarUrl(cover);
-  // In select mode a folder the user made can be ticked (to delete it); the
-  // built-in folders still just open.
+  const allImages = items.length > 0 && items.every((i) => i.kind === "image");
+  const word = allImages ? "image" : "item";
+  const Icon = FOLDER_ICONS[name] || Folder;
   const pick = selecting && selectable;
   return (
-    <button type="button" onClick={pick ? onToggle : onOpen} className="text-left group"
+    <button type="button" onClick={pick ? onToggle : onOpen} className="text-left group min-w-0"
       aria-pressed={pick ? selected : undefined}
       aria-label={pick ? `${selected ? "Deselect" : "Select"} folder ${name}` : undefined}>
       <div className={`relative w-full aspect-square rounded-xl overflow-hidden border bg-muted/30 flex items-center justify-center transition-colors ${
-        selected ? "border-primary ring-2 ring-primary" : "border-border/50 group-hover:border-primary/50"}`}>
+        selected ? "border-primary ring-2 ring-primary" : "border-border/50 group-hover:border-primary/50"} ${selecting && !selectable ? "opacity-50" : ""}`}>
         {pick && (
           <span className={`absolute top-1.5 right-1.5 z-10 w-5 h-5 rounded-full border-2 flex items-center justify-center ${
             selected ? "bg-primary border-primary text-primary-foreground" : "bg-black/40 border-white/80"}`}>
@@ -191,16 +227,10 @@ function FolderTile({ name, items, onOpen, selecting = false, selectable = false
         )}
         {resolved
           ? <img src={resolved} alt="" className="w-full h-full object-cover" loading="lazy" />
-          : name === VIDEOS_FOLDER
-            ? <Film className="w-8 h-8 text-muted-foreground/60" />
-            : name === AUDIO_FOLDER || name === SONGS_AUDIO_FOLDER
-              ? <Music className="w-8 h-8 text-muted-foreground/60" />
-              : name === OTHERS_FOLDER
-              ? <FileIcon className="w-8 h-8 text-muted-foreground/60" />
-              : <Folder className="w-8 h-8 text-muted-foreground/60" />}
+          : <Icon className="w-8 h-8 text-muted-foreground/60" />}
       </div>
       <p className="text-xs font-medium truncate mt-1 px-0.5">{name}</p>
-      <p className="text-[0.625rem] text-muted-foreground px-0.5">{items.length} item{items.length === 1 ? "" : "s"}</p>
+      <p className="text-[0.625rem] text-muted-foreground px-0.5">{items.length} {word}{items.length === 1 ? "" : "s"}</p>
     </button>
   );
 }
@@ -213,33 +243,31 @@ function FolderDeleteDialog({ folders, onCancel, onKeepFiles, onDeleteAll }) {
   const shown = folders.slice(0, 5);
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onCancel(); }}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-sm" aria-describedby={undefined}>
         <DialogTitle className="text-sm">Delete {many ? `${folders.length} folders` : "this folder"}?</DialogTitle>
         <div className="text-xs text-muted-foreground space-y-0.5">
           {shown.map((f) => (
             <p key={f.name} className="flex items-center justify-between gap-2">
               <span className="truncate text-foreground">{f.name}</span>
-              <span className="flex-shrink-0">{f.count} file{f.count === 1 ? "" : "s"}</span>
+              <span className="flex-shrink-0">{f.count} item{f.count === 1 ? "" : "s"}</span>
             </p>
           ))}
           {folders.length > shown.length && <p>+ {folders.length - shown.length} more</p>}
         </div>
-        {totalFiles === 0 ? (
-          <p className="text-xs text-muted-foreground">{many ? "These folders are" : "This folder is"} empty.</p>
-        ) : (
-          <p className="text-xs text-muted-foreground">Choose what happens to the files inside.</p>
-        )}
+        <p className="text-xs text-muted-foreground">
+          {totalFiles === 0 ? `${many ? "These folders are" : "This folder is"} empty.` : "Choose what happens to what's inside."}
+        </p>
         <div className="flex flex-col gap-2">
           <button type="button" onClick={onKeepFiles}
             className="w-full rounded-lg border border-border px-3 py-2 text-left hover:bg-muted/40">
             <span className="block text-sm font-medium">{totalFiles === 0 ? `Delete ${many ? "folders" : "folder"}` : `Delete ${many ? "folders" : "folder"} only`}</span>
-            {totalFiles > 0 && <span className="block text-xs text-muted-foreground">Keeps the files — they move to “{UNORGANIZED_FOLDER}”.</span>}
+            {totalFiles > 0 && <span className="block text-xs text-muted-foreground">Keeps everything inside — it moves to “{UNORGANIZED_FOLDER}”.</span>}
           </button>
           {totalFiles > 0 && (
             <button type="button" onClick={onDeleteAll}
               className="w-full rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-left text-destructive hover:bg-destructive/15">
-              <span className="block text-sm font-medium">Delete {many ? "folders" : "folder"} and all files</span>
-              <span className="block text-xs opacity-80">Permanently deletes {totalFiles} file{totalFiles === 1 ? "" : "s"}. Can&apos;t be undone.</span>
+              <span className="block text-sm font-medium">Delete {many ? "folders" : "folder"} and everything in {many ? "them" : "it"}</span>
+              <span className="block text-xs opacity-80">Permanently deletes {totalFiles} item{totalFiles === 1 ? "" : "s"}. Anything still in use elsewhere is kept on this device.</span>
             </button>
           )}
           <button type="button" onClick={onCancel} className="w-full h-9 rounded-lg border border-border text-sm">Cancel</button>
@@ -249,7 +277,7 @@ function FolderDeleteDialog({ folders, onCancel, onKeepFiles, onDeleteAll }) {
   );
 }
 
-// Pick a destination folder for moved images: any folder, a new one, or
+// Pick a destination folder for moved items: any folder, a new one, or
 // back to automatic filing.
 function MoveDialog({ count, folders, onCancel, onMove }) {
   const [target, setTarget] = useState(null);
@@ -262,7 +290,7 @@ function MoveDialog({ count, folders, onCancel, onMove }) {
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onCancel(); }}>
       <DialogContent className="max-w-sm">
-        <DialogTitle className="text-sm">Move {count} image{count === 1 ? "" : "s"} to…</DialogTitle>
+        <DialogTitle className="text-sm">Move {count} item{count === 1 ? "" : "s"} to…</DialogTitle>
         <SearchableSelect value={target} onChange={setTarget} options={options} placeholder="Choose a folder" searchPlaceholder="Search folders…" />
         <button type="button" onClick={newFolder} className="text-xs text-primary hover:underline self-start flex items-center gap-1">
           <FolderPlus className="w-3.5 h-3.5" /> New folder…
@@ -282,7 +310,6 @@ export default function AssetsLibrary() {
   const t = useTerms();
   const [searchParams, setSearchParams] = useSearchParams();
   const [rawImages, setRawImages] = useState({});
-  const [mediaList, setMediaList] = useState([]); // videos / audio / files from the media store
   const [loadingImages, setLoadingImages] = useState(true);
   const [search, setSearch] = useState("");
   const [uploadFolder, setUploadFolder] = useState("");
@@ -304,6 +331,7 @@ export default function AssetsLibrary() {
   const [selectedKeys, setSelectedKeys] = useState(() => new Set());
   const [moveOpen, setMoveOpen] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [preview, setPreview] = useState(null); // song / video / file opened from its tile
   // Folders ticked in select mode (on the folder grid), to delete.
   const [selectedFolders, setSelectedFolders] = useState(() => new Set());
   const [folderDeleteOpen, setFolderDeleteOpen] = useState(false);
@@ -332,39 +360,7 @@ export default function AssetsLibrary() {
   const { data: settingsList = [] } = useQuery({ queryKey: ["systemSettings"], queryFn: () => base44.entities.SystemSettings.list() });
   const settingsRow = settingsList[0] || null;
   const rules = useMemo(() => resolveAssetRules(settingsRow), [settingsRow]);
-  // "Skip in backups" — per file or per folder. Everything is backed up unless
-  // marked here; marking only leaves a file OUT of backups (it's never deleted
-  // or changed), so a skipped file lives only on this device.
-  const backupSkipSet = useMemo(
-    () => new Set(Array.isArray(settingsRow?.backup_skip?.keys) ? settingsRow.backup_skip.keys : []),
-    [settingsRow],
-  );
-  const backupKeyOf = (item) => (item.refOnly ? null : item.isMedia ? skipKeyForMedia(item.mediaId) : skipKeyForImage(item.id));
-  const isBackupSkipped = (item) => { const k = backupKeyOf(item); return !!k && backupSkipSet.has(k); };
-  const toggleBackupSkip = async (item) => {
-    const k = backupKeyOf(item);
-    if (!k) return;
-    const skip = !backupSkipSet.has(k);
-    try {
-      await setBackupSkipKeys([k], skip);
-      qc.invalidateQueries({ queryKey: ["systemSettings"] });
-      toast.success(skip ? "Left out of backups (it stays on this device only)" : "Included in backups again");
-    } catch (e) { toast.error(e?.message || "Couldn't change that"); }
-  };
-  // Applies to the files that are in the folder right now; files added later
-  // are included by default.
-  const setFolderBackupSkip = async (list, skip) => {
-    const keys = list.map(backupKeyOf).filter(Boolean);
-    if (!keys.length) return;
-    if (skip && !(await confirm(`Leave ${keys.length} file${keys.length === 1 ? "" : "s"} in this folder out of every backup? They stay on this device, but they won't be in an exported or automatic backup — if this device is lost or wiped, they can't be restored. Files you add later are still included.`))) return;
-    try {
-      await setBackupSkipKeys(keys, skip);
-      qc.invalidateQueries({ queryKey: ["systemSettings"] });
-      toast.success(skip ? `${keys.length} left out of backups` : `${keys.length} included in backups again`);
-    } catch (e) { toast.error(e?.message || "Couldn't change that"); }
-  };
-  const AUTO_FOLDERS = useMemo(() => new Set([...autoFolderNames(rules), BUILT_IN_FOLDER, AUDIO_FOLDER, OTHERS_FOLDER, SONGS_AUDIO_FOLDER, VIDEOS_FOLDER, UNORGANIZED_FOLDER]), [rules]);
-  const autoFolderFor = (id) => autoFolderForRules(id, rules);
+  const AUTO_FOLDERS = useMemo(() => new Set([...autoFolderNames(rules), BUILT_IN_FOLDER]), [rules]);
   const alterFolderName = (alterId, role) => alterFolderNameRules(alterNameById[alterId] || "Unknown alter", role, rules);
   const [orgOpen, setOrgOpen] = useState(false);
   const saveRules = async (patch) => {
@@ -408,13 +404,9 @@ export default function AssetsLibrary() {
      
   }, [searchParams, loadingImages, alters.length]);
 
-  const loadMedia = async () => {
-    try { setMediaList(await listMedia()); } catch { setMediaList([]); }
-  };
   const loadImages = async () => {
     setLoadingImages(true);
-    try { setRawImages(await getAllLocalImages()); } catch { setRawImages({}); }
-    await loadMedia();
+    try { setRawImages(await listLocalImageMeta()); } catch { setRawImages({}); }
     setLoadingImages(false);
   };
   useEffect(() => { loadImages(); }, []);
@@ -434,49 +426,39 @@ export default function AssetsLibrary() {
     const out = [];
     for (const id of Object.keys(rawImages)) {
       const asset = assetByImageId[id];
-      const data = rawImages[id];
-      const isVideoData = typeof data === "string" && data.startsWith("data:video/");
-      // Songs saved before the "Songs Audio" folder existed carry the folder
-      // name "Audio", which now belongs to audio attached in chat.
-      const isSongData = (typeof data === "string" && data.startsWith("data:audio/")) || asset?.kind === "audio" || String(id).startsWith("song-");
+      const meta = rawImages[id];
+      const kind = assetKind({ asset, meta, id });
+      const mime = resolveMime({ recordMime: asset?.mime, storedMime: meta?.mime, head: meta?.head });
       out.push({
         key: id, id,
         url: `/local-image/${encodeURIComponent(id)}`,
         asset: asset || null,
+        kind, mime, size: meta?.size || asset?.size || 0,
         name: asset?.name || usage[id]?.name || id,
         folder: asset?.owner_alter_id && rules.perAlter ? alterFolderName(asset.owner_alter_id, asset.owner_role)
-          : (((asset?.folder || "").trim() === AUDIO_FOLDER && isSongData ? SONGS_AUDIO_FOLDER : (asset?.folder || "").trim()) || usage[id]?.folder || (isVideoData ? VIDEOS_FOLDER : autoFolderFor(id))),
+          : (explicitFolderOf(asset, id, rules) || usage[id]?.folder || autoFolderForItem(id, kind, rules)),
         ...(usage[id]?.ownerAlterId && !asset ? { ownerAlterId: usage[id].ownerAlterId, role: usage[id].role } : {}),
-        isGif: !!asset?.is_gif || (typeof data === "string" && data.startsWith("data:image/gif")),
-        // Songs are kept in this store too — show them as audio, not a broken picture.
-        ...(typeof data === "string" && data.startsWith("data:audio/") ? { kind: "audio" }
-          : typeof data === "string" && data.startsWith("data:video/") ? { kind: "video" }
-          : asset?.kind === "audio" ? { kind: "audio" } : {}),
-      });
-    }
-    // Attached files / videos — linked: the same records the chat plays from.
-    for (const m of mediaList) {
-      out.push({
-        key: `media-${m.id}`, id: m.id, mediaId: m.id, isMedia: true,
-        kind: m.kind, mime: m.mime, size: m.size,
-        url: "", asset: null, name: m.name, folder: mediaFolderFor(m.kind), isGif: false,
+        isGif: !!asset?.is_gif || mime === "image/gif",
       });
     }
     for (const a of assets) {
       const lid = a.image_url ? getLocalImageId(a.image_url) : null;
       if (lid && rawImages[lid] !== undefined) continue;
+      const kind = assetKind({ asset: a });
       out.push({
         key: `asset-${a.id}`, id: a.id, url: a.image_url, asset: a,
-        name: a.name || "Image",
-        folder: a.owner_alter_id && rules.perAlter ? alterFolderName(a.owner_alter_id, a.owner_role) : ((a.folder || "").trim() || "Library uploads"),
+        kind, mime: a.mime || "", size: a.size || 0,
+        name: a.name || (kind === "image" ? "Image" : "File"),
+        folder: a.owner_alter_id && rules.perAlter ? alterFolderName(a.owner_alter_id, a.owner_role)
+          : (explicitFolderOf(a, lid, rules) || (kind === "image" ? "Library uploads" : kindFolderFor(kind, lid))),
         isGif: !!a.is_gif,
       });
     }
     // Referenced pictures, skipping any already covered by a stored asset.
     const known = new Set(out.map((i) => i.url));
-    for (const r of referenced) if (!known.has(r.url)) out.push({ ...r, id: r.key, asset: null, isGif: false });
+    for (const r of referenced) if (!known.has(r.url)) out.push({ ...r, id: r.key, asset: null, kind: "image", mime: "", isGif: false });
     return out;
-  }, [rawImages, mediaList, assets, assetByImageId, alterNameById, rules, referenced, usage]);
+  }, [rawImages, assets, assetByImageId, alterNameById, rules, referenced, usage]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -492,25 +474,21 @@ export default function AssetsLibrary() {
 
     const isAlterFolder = (f) => f.startsWith(ALTER_FOLDER_PREFIX);
     const userFromItems = [...new Set(filtered.map((i) => i.folder).filter((f) => !AUTO_FOLDERS.has(f) && !isAlterFolder(f)))];
-    // A saved folder name that is now a built-in one (an old "Audio" folder made
-    // before Audio became built in) would show up twice — keep only the built-in.
+    // A saved folder name that is now a built-in one (an old "Audio" folder
+    // made before Audio was built in) would show up twice — keep the built-in.
     const userNames = folderOrder.filter((n, i, arr) => n && !AUTO_FOLDERS.has(n) && !isAlterFolder(n) && arr.indexOf(n) === i);
     for (const n of userFromItems) if (!userNames.includes(n)) userNames.push(n);
 
     const alterFolderNames = Object.keys(map).filter(isAlterFolder).sort((a, b) => a.localeCompare(b));
 
     const autoNames = Object.keys(map)
-      .filter((f) => AUTO_FOLDERS.has(f))
+      .filter((f) => AUTO_FOLDERS.has(f) && !BUILT_IN_KIND_FOLDERS.includes(f))
       .sort((a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b)));
-    // Always show Videos, Audio and Others (even empty) so it's clear where chat
-    // attachments go — each kind in its own folder.
-    for (const nm of [AUDIO_FOLDER, OTHERS_FOLDER, VIDEOS_FOLDER]) {
-      const fi = autoNames.indexOf(nm);
-      if (fi > -1) autoNames.splice(fi, 1);
-    }
-    autoNames.unshift(VIDEOS_FOLDER, AUDIO_FOLDER, OTHERS_FOLDER);
 
-    let ordered = [...userNames, ...alterFolderNames, ...autoNames];
+    // Videos, Audio and Others are always listed (even empty) so it's clear
+    // where each kind of file goes — except while searching, when only hits show.
+    const kindFolders = BUILT_IN_KIND_FOLDERS.filter((f) => !search.trim() || (map[f] || []).length > 0);
+    let ordered = [...userNames, ...kindFolders, ...alterFolderNames, ...autoNames];
     // Owner-filter narrows to just folders whose AssetFolder record lists
     // the chosen alter (and the synthetic 👤 folder for that alter, which
     // always belongs to them).
@@ -523,7 +501,7 @@ export default function AssetsLibrary() {
       });
     }
     return { byFolder: map, orderedFolders: ordered };
-  }, [filtered, folderOrder, ownerFilter, assetFolderByName, AUTO_FOLDERS]);
+  }, [filtered, folderOrder, ownerFilter, assetFolderByName, search, AUTO_FOLDERS]);
 
   // Assign / update / clear the alter-owners set for a user folder. Creates
   // an AssetFolder record on first assignment; deletes it when the user
@@ -594,25 +572,35 @@ export default function AssetsLibrary() {
     });
   };
 
+  // Pictures are compressed like every upload. Videos, audio and any other
+  // file are stored exactly as they are (original quality) and file
+  // themselves into Videos / Audio / Others — or the open folder.
+  const targetFolder = () => (openFolder && isUser(openFolder) ? openFolder : uploadFolder).trim();
   const handleFiles = async (e) => {
     const files = [...(e.target.files || [])];
     e.target.value = "";
     if (!files.length) return;
     setUploading(true);
-    let added = 0;
-    let addedFiles = 0;
-    let addedAudio = 0;
-    let addedVideos = 0;
+    let added = 0, addedFiles = 0, tooBig = 0, notLocal = 0;
     for (const file of files) {
-      // Pictures go to the picture library; videos, audio and any other file are
-      // stored untouched (original quality, no compression) — videos in Videos,
-      // everything else in Others.
-      const fileKind = classifyMedia(file.type, file.name);
-      if (fileKind !== "image") {
-        try { await saveMedia(file); if (fileKind === "video") addedVideos++; else if (fileKind === "audio") addedAudio++; else addedFiles++; } catch { /* skip */ }
-        continue;
-      }
       try {
+        const picked = classifyFile(file.type, file.name);
+        if (picked !== "image") {
+          if (!isLocalMode()) { notLocal++; continue; }
+          if (file.size > MAX_FILE_BYTES) { tooBig++; continue; }
+          const id = `file-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          const mime = file.type || "";
+          await saveLocalImage(id, file, mime || undefined);
+          const kind = mime ? assetKind({ asset: { mime }, id }) : picked;
+          await base44.entities.ImageAsset.create({
+            name: file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "File",
+            image_url: createLocalImageUrl(id), folder: targetFolder(),
+            kind, mime, file_name: file.name, size: file.size,
+            is_gif: false, created_date: new Date().toISOString(),
+          });
+          addedFiles++;
+          continue;
+        }
         const { dataUrl, isGif } = await processUploadedImage(file, 1200, 0.85);
         let url = dataUrl;
         if (isLocalMode()) {
@@ -622,7 +610,7 @@ export default function AssetsLibrary() {
         }
         await base44.entities.ImageAsset.create({
           name: file.name.replace(/\.[^.]+$/, "").slice(0, 60) || "Image",
-          image_url: url, folder: (openFolder && isUser(openFolder) ? openFolder : uploadFolder).trim(), is_gif: isGif, created_date: new Date().toISOString(),
+          image_url: url, folder: targetFolder(), is_gif: isGif, created_date: new Date().toISOString(),
         });
         added++;
       } catch { /* skip */ }
@@ -632,139 +620,226 @@ export default function AssetsLibrary() {
     setUploading(false);
     const bits = [];
     if (added) bits.push(`${added} image${added === 1 ? "" : "s"}`);
-    if (addedVideos) bits.push(`${addedVideos} video${addedVideos === 1 ? "" : "s"} (in ${VIDEOS_FOLDER})`);
-    if (addedAudio) bits.push(`${addedAudio} audio file${addedAudio === 1 ? "" : "s"} (in ${AUDIO_FOLDER})`);
-    if (addedFiles) bits.push(`${addedFiles} file${addedFiles === 1 ? "" : "s"} (in ${OTHERS_FOLDER})`);
+    if (addedFiles) bits.push(`${addedFiles} file${addedFiles === 1 ? "" : "s"}`);
     if (bits.length) toast.success(`${bits.join(" and ")} uploaded`);
+    if (tooBig) toast.error(`${tooBig} file${tooBig === 1 ? " is" : "s are"} over ${Math.round(MAX_FILE_BYTES / (1024 * 1024))} MB and ${tooBig === 1 ? "wasn't" : "weren't"} stored.`);
+    if (notLocal) toast.error("Videos, audio and other files can only be stored on this device in local mode.");
   };
 
-  const saveToLibrary = async (item) => {
-    const name = await promptText({ title: "Name this image", defaultValue: item.name && item.name !== item.id ? item.name : "" });
+  // The fields a new library record for this item needs, so a picture that
+  // had no record yet (a chat image, an imported avatar) keeps its type and
+  // its owner when it gets one.
+  const recordFor = (item, extra) => ({
+    name: item.name && item.name !== item.id ? item.name : (item.kind === "image" ? "Image" : "File"),
+    image_url: item.url, is_gif: !!item.isGif, created_date: new Date().toISOString(),
+    ...(item.kind && item.kind !== "image" ? { kind: item.kind, mime: item.mime || "" } : {}),
+    ...(item.ownerAlterId ? { owner_alter_id: item.ownerAlterId, owner_role: item.role || "avatar" } : {}),
+    ...extra,
+  });
+
+  // Rename anything — a picture with no record yet gets one, filed where
+  // it already shows (a stored one keeps filing automatically).
+  const renameItem = async (item) => {
+    const current = item.name && item.name !== item.id ? item.name : "";
+    const name = await promptText({ title: `Rename ${KIND_WORD[item.kind] || "item"}`, defaultValue: current, placeholder: "Name" });
     if (name === null) return;
-    const folder = (await promptText({ title: "Folder (optional)", placeholder: "Leave blank for none", defaultValue: item.folder === autoFolderFor(item.id) ? "" : item.folder })) || "";
+    const clean = name.trim() || (item.kind === "image" ? "Image" : "File");
     try {
-      await base44.entities.ImageAsset.create({
-        name: name.trim() || "Image", image_url: item.url, folder: folder.trim(), is_gif: item.isGif, created_date: new Date().toISOString(),
-        // A picture in use on an alter keeps its owner so it files under 👤.
-        ...(item.ownerAlterId ? { owner_alter_id: item.ownerAlterId, owner_role: item.role || "avatar" } : {}),
-      });
+      if (item.asset) await base44.entities.ImageAsset.update(item.asset.id, { name: clean });
+      else await base44.entities.ImageAsset.create(recordFor(item, { name: clean, folder: item.refOnly && isUser(item.folder) ? item.folder : "" }));
       qc.invalidateQueries({ queryKey: ["imageAssets"] });
-      toast.success("Saved to your library");
-    } catch (e) { toast.error(e?.message || "Couldn't save"); }
-  };
-  const renameAsset = async (item) => {
-    if (item.refOnly) return;
-    const name = await promptText({ title: "Rename", defaultValue: item.name && item.name !== item.id ? item.name : "" });
-    if (name === null || !name.trim()) return;
-    try {
-      if (item.isMedia) {
-        await renameMedia(item.mediaId, name.trim());
-        await loadMedia();
-      } else if (item.asset) {
-        await base44.entities.ImageAsset.update(item.asset.id, { name: name.trim() });
-        qc.invalidateQueries({ queryKey: ["imageAssets"] });
-      } else {
-        // Not named yet: naming it adds it to the library. An empty folder keeps
-        // it filed where it already is (e.g. Chat images), so nothing jumps.
-        await base44.entities.ImageAsset.create({
-          name: name.trim(), image_url: item.url, folder: "", is_gif: item.isGif, created_date: new Date().toISOString(),
-          ...(item.kind ? { kind: item.kind } : {}),
-          ...(item.ownerAlterId ? { owner_alter_id: item.ownerAlterId, owner_role: item.role || "avatar" } : {}),
-        });
-        qc.invalidateQueries({ queryKey: ["imageAssets"] });
-      }
       toast.success("Renamed");
     } catch (e) { toast.error(e?.message || "Couldn't rename"); }
   };
-  // Save a copy to Downloads/Oceans Symphony/files/<Images|Videos|Audio|Files>,
-  // under its real name and type (a song is "Name.mp3", never ".img").
-  const saveItemToDevice = async (item) => {
-    try {
-      let blob = null;
-      let name = item.name;
-      if (item.isMedia) {
-        const rec = await getMedia(item.mediaId);
-        if (rec) { blob = playableBlob(rec); name = rec.name; }
-      } else {
-        const lid = isLocalImageUrl(item.url) ? getLocalImageId(item.url) : (rawImages[item.id] !== undefined ? item.id : null);
-        if (lid) {
-          const v = await getLocalImage(lid);
-          blob = v instanceof Blob ? v : (typeof v === "string" ? dataUrlToBlob(v) : null);
-        } else if (item.url) {
-          const r = await fetch(item.url);
-          if (r.ok) blob = await r.blob();
-        }
-      }
-      if (!blob) { toast.error("Couldn't read that file."); return; }
-      const head = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
-      const filename = nameWithRealExt({ name, id: item.id, mime: blob.type || item.mime, head });
-      const kind = classifyMedia(blob.type || item.mime, filename);
-      const res = await saveBlobToDeviceFolder({ blob, filename, mime: blob.type || item.mime, kind });
-      const msg = describeSaveResult(res, filename);
-      if (msg) (msg.type === "error" ? toast.error : toast.success)(msg.text);
-    } catch (e) {
-      toast.error(e?.message || "Couldn't save to device");
-    }
+
+  const saveItem = async (item) => {
+    const res = await saveAssetToDevice({
+      url: item.url, name: item.name && item.name !== item.id ? item.name : "",
+      mime: item.mime, kind: item.kind, originalName: item.asset?.file_name || "",
+    });
+    if (res.ok) toast.success(res.location ? `Saved to ${res.location}` : "Saved to device");
+    else if (res.error === "not_on_device") toast.error(`That ${KIND_WORD[item.kind] || "file"} isn't stored on this device.`);
+    else if (res.error !== "cancelled") toast.error("Couldn't save it to the device.");
   };
-  const moveAsset = async (item) => {
-    if (!item.asset) return;
-    const folder = await promptText({ title: "Move to folder", placeholder: "Leave blank for none", defaultValue: item.asset.folder || "" });
-    if (folder === null) return;
-    try { await base44.entities.ImageAsset.update(item.asset.id, { folder: folder.trim() }); qc.invalidateQueries({ queryKey: ["imageAssets"] }); } catch (e) { toast.error(e?.message || "Failed"); }
+
+  // Why an item can't be moved, or null when it can.
+  const moveBlockedFor = (item) => (item.asset?.owner_alter_id && rules.perAlter
+    ? `Filed under its ${t.alter}'s 👤 folder — turn that off in the auto-organisation panel to move it`
+    : null);
+
+  // Words for where a file is still used, for the delete warning.
+  const placeWord = (entity, n) => {
+    const words = {
+      SystemChatMessage: ["chat message", "chat messages"], Bulletin: ["bulletin", "bulletins"],
+      BulletinComment: ["comment", "comments"], JournalEntry: ["journal entry", "journal entries"],
+      Alter: [t.alter, t.alters], AlterNote: [`${t.alter} note`, `${t.alter} notes`], Group: ["group", "groups"],
+      Contact: ["contact", "contacts"], SystemSettings: ["setting", "settings"],
+      ImageAsset: [`${t.alter} image-pool entry`, `${t.alter} image-pool entries`],
+    }[entity];
+    if (words) return `${n} ${n === 1 ? words[0] : words[1]}`;
+    const plain = entity.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+    return `${n} ${plain} record${n === 1 ? "" : "s"}`;
   };
+  const usesSummary = (uses) => Object.entries(uses || {}).map(([e, n]) => placeWord(e, n)).join(", ");
+
+  // Folders an alter's avatar/background pool is linked to — rows filed
+  // there are that pool's pictures, not spare library copies.
+  const linkedPoolFolders = useMemo(() => new Set(alters
+    .flatMap((a) => [a.avatar_pool_folder, a.background_pool_folder])
+    .map((f) => (f || "").trim()).filter(Boolean)), [alters]);
+  const isPoolRow = (a) => !!a.owner_alter_id || linkedPoolFolders.has((a.folder || "").trim());
+
+  // The library records a delete removes: the tile's own record, plus
+  // plain duplicate library rows for the same file. Rows that belong to an
+  // alter's image pool ("Pick from library" makes a second row pointing at
+  // the same picture) are never removed from here — they're a use of it.
+  const rowsToRemove = (item) => {
+    if (!item.asset) return assets.filter((a) => a.image_url && a.image_url === item.url && !isPoolRow(a));
+    if (isPoolRow(item.asset)) return [item.asset];
+    return assets.filter((a) => a.id === item.asset.id || (a.image_url && a.image_url === item.url && !isPoolRow(a)));
+  };
+  const storedIdFor = (item) => (isLocalImageUrl(item.url) ? getLocalImageId(item.url) : (item.asset ? null : item.id));
+
+  // Where the file stays in use once this delete is done: records that
+  // show it, plus library / pool rows that aren't being removed.
+  const usesAfterDelete = (item) => {
+    const lid = storedIdFor(item) || item.id;
+    const uses = { ...(findStoredFileUses([lid])[lid] || {}) };
+    const removing = new Set(rowsToRemove(item).map((a) => a.id));
+    const otherRows = assets.filter((a) => !removing.has(a.id) && a.image_url && getLocalImageId(a.image_url) === lid).length;
+    if (otherRows) uses.ImageAsset = otherRows;
+    return uses;
+  };
+
+  // Remove one library item: its library record(s), then the stored file —
+  // but ONLY when nothing else still uses that file (another library or
+  // pool row, an avatar, a background, a message, another system…). A
+  // file that's still used is kept so nothing that shows it breaks.
+  // Returns { keptFile }.
+  const removeStored = async (item) => {
+    const lid = storedIdFor(item);
+    const rows = rowsToRemove(item);
+    for (const a of rows) await base44.entities.ImageAsset.delete(a.id);
+    if (!lid) return { keptFile: false };
+    const { deleted } = await deleteLocalImageIfUnused(lid, { deletedRecords: rows.map((a) => ({ entity: "ImageAsset", id: a.id })) });
+    return { keptFile: !deleted };
+  };
+
   const del = async (item) => {
-    if (item.isMedia) {
-      if (!(await confirm("Permanently delete this file? Any chat message showing it will say it isn't stored on this device. This can't be undone."))) return;
-      try { await deleteMedia(item.mediaId); await loadMedia(); } catch (e) { toast.error(e?.message || "Couldn't delete"); }
-      return;
-    }
-    if (!(await confirm("Permanently delete this image? If it's used as an avatar, background, or in a post, that will break. This can't be undone."))) return;
+    if (item.refOnly) return;
+    const where = usesSummary(usesAfterDelete(item));
+    const word = KIND_WORD[item.kind] || "item";
+    const ok = await confirm({
+      title: `Delete “${item.name}”?`,
+      body: where
+        ? `This ${word} is still used in ${where}, so it stays stored on this device for those — only this library entry is removed.`
+        : `This permanently removes the ${word} from this device. This can't be undone — save it to the device first if you want a copy.`,
+      confirmLabel: "Delete", destructive: true,
+    });
+    if (!ok) return;
     try {
-      if (item.asset) await base44.entities.ImageAsset.delete(item.asset.id);
-      const lid = isLocalImageUrl(item.url) ? getLocalImageId(item.url) : item.id;
-      if (lid) await deleteLocalImage(lid);
+      const { keptFile } = await removeStored(item);
       qc.invalidateQueries({ queryKey: ["imageAssets"] });
       await loadImages();
+      if (keptFile) toast.success(`Removed from the library — the ${word} is kept because it's still used elsewhere`);
+      else toast.success("Deleted");
     } catch (e) { toast.error(e?.message || "Couldn't delete"); }
   };
 
-  // ── Bulk actions ────────────────────────────────────────────────────
-  const selectedItems = useMemo(() => items.filter((i) => selectedKeys.has(i.key)), [items, selectedKeys]);
-  const toggleSelect = (item) => setSelectedKeys((s) => { const n = new Set(s); n.has(item.key) ? n.delete(item.key) : n.add(item.key); return n; });
-  const bulkMove = async (folder) => {
-    setMoveOpen(false);
-    setBulkBusy(true);
+  // ── Moving (one item from its tile, or the selection) ───────────────
+  const [moveItems, setMoveItems] = useState(null); // null | item[]
+  const openMove = (item) => {
+    const blocked = moveBlockedFor(item);
+    if (blocked) { toast.info(blocked); return; }
+    setMoveItems([item]);
+  };
+  const doMove = async (list, folder) => {
     let moved = 0, skipped = 0;
-    for (const item of selectedItems) {
+    for (const item of list) {
       try {
-        if (item.isMedia) { skipped++; continue; } // Videos and Files are their own linked folders
-        if (item.asset?.owner_alter_id && rules.perAlter) { skipped++; continue; } // filed under its alter
+        if (moveBlockedFor(item)) { skipped++; continue; } // filed under its alter
         if (item.asset) await base44.entities.ImageAsset.update(item.asset.id, { folder });
-        else await base44.entities.ImageAsset.create({ name: item.name && item.name !== item.id ? item.name : "Image", image_url: item.url, folder, is_gif: item.isGif, created_date: new Date().toISOString() });
+        else await base44.entities.ImageAsset.create(recordFor(item, { folder }));
         moved++;
       } catch { skipped++; }
     }
     if (folder && isUser(folder) && !folderOrder.includes(folder)) setFolderOrder((o) => [...o, folder]);
     qc.invalidateQueries({ queryKey: ["imageAssets"] });
-    setBulkBusy(false);
-    stopSelecting();
-    toast.success(`Moved ${moved} image${moved === 1 ? "" : "s"}${skipped ? ` · ${skipped} filed under their ${t.alter} stayed put` : ""}`);
-  };
-  // Delete files for good (pictures, videos, audio…); returns how many failed.
-  const deleteItems = async (list) => {
-    let failed = 0;
-    for (const item of list) {
-      try {
-        if (item.isMedia) { await deleteMedia(item.mediaId); continue; }
-        if (item.asset) await base44.entities.ImageAsset.delete(item.asset.id);
-        const lid = isLocalImageUrl(item.url) ? getLocalImageId(item.url) : item.id;
-        if (lid) await deleteLocalImage(lid);
-      } catch { failed++; }
-    }
-    return failed;
+    return { moved, skipped };
   };
 
-  // ── Folder deletion (select mode, folder grid) ──────────────────────
+  // ── Bulk actions ────────────────────────────────────────────────────
+  const selectedItems = useMemo(() => items.filter((i) => selectedKeys.has(i.key)), [items, selectedKeys]);
+  const toggleSelect = (item) => setSelectedKeys((s) => { const n = new Set(s); n.has(item.key) ? n.delete(item.key) : n.add(item.key); return n; });
+  const runMove = async (folder) => {
+    const list = moveItems || selectedItems;
+    const single = !!moveItems;
+    setMoveOpen(false);
+    setMoveItems(null);
+    setBulkBusy(true);
+    const { moved, skipped } = await doMove(list, folder);
+    setBulkBusy(false);
+    if (!single) stopSelecting();
+    toast.success(`Moved ${moved} item${moved === 1 ? "" : "s"}${skipped ? ` · ${skipped} filed under their ${t.alter} stayed put` : ""}`);
+  };
+  const bulkDelete = async () => {
+    const n = selectedItems.length;
+    const inUse = selectedItems.filter((i) => Object.keys(usesAfterDelete(i)).length).length;
+    const warn = inUse ? ` ${inUse} of them ${inUse === 1 ? "is" : "are"} still in use (an avatar, background, image pool, post or message), so ${inUse === 1 ? "it stays" : "those stay"} stored on this device — only the library ${inUse === 1 ? "entry is" : "entries are"} removed.` : "";
+    if (!(await confirm({ title: `Delete ${n} item${n === 1 ? "" : "s"}?`, body: `This permanently removes them from this device.${warn} This can't be undone.`, confirmLabel: "Delete", destructive: true }))) return;
+    setBulkBusy(true);
+    let failed = 0, kept = 0;
+    for (const item of selectedItems) {
+      try { if ((await removeStored(item)).keptFile) kept++; } catch { failed++; }
+    }
+    qc.invalidateQueries({ queryKey: ["imageAssets"] });
+    await loadImages();
+    setBulkBusy(false);
+    stopSelecting();
+    if (failed) toast.error(`${failed} couldn't be deleted`);
+    else toast.success(`Deleted ${n} item${n === 1 ? "" : "s"}${kept ? ` · ${kept} kept on this device because ${kept === 1 ? "it's" : "they're"} still used elsewhere` : ""}`);
+  };
+
+  // ── "Skip in backups" (per file, or every file in a folder) ─────────
+  // Everything is backed up unless marked here. Marking only leaves a file
+  // OUT of backups — it is never deleted or changed — so a skipped file
+  // lives only on this device.
+  const backupSkipSet = useMemo(() => skipSetFromSettings(settingsRow), [settingsRow]);
+  const backupKeyOf = (item) => { const lid = item.refOnly ? null : storedIdFor(item); return lid ? skipKeyForImage(lid) : null; };
+  const isBackupSkipped = (item) => { const k = backupKeyOf(item); return !!k && backupSkipSet.has(k); };
+  const toggleBackupSkip = async (item) => {
+    const k = backupKeyOf(item);
+    if (!k) return;
+    const skip = !backupSkipSet.has(k);
+    if (skip && !(await confirm({
+      title: `Leave “${item.name}” out of backups?`,
+      body: "It stays on this device, but it won't be in an exported or automatic backup. If this device is lost or wiped, it can't be restored.",
+      confirmLabel: "Leave it out",
+    }))) return;
+    try {
+      await setBackupSkipKeys([k], skip);
+      qc.invalidateQueries({ queryKey: ["systemSettings"] });
+      toast.success(skip ? "Left out of backups (it stays on this device only)" : "Included in backups again");
+    } catch (e) { toast.error(e?.message || "Couldn't change that"); }
+  };
+  // Applies to what's in the folder right now; files added later are
+  // included by default.
+  const setFolderBackupSkip = async (list, skip) => {
+    const keys = [...new Set(list.map(backupKeyOf).filter(Boolean))];
+    if (!keys.length) return;
+    if (skip && !(await confirm({
+      title: `Leave ${keys.length} file${keys.length === 1 ? "" : "s"} out of backups?`,
+      body: "They stay on this device, but they won't be in an exported or automatic backup. If this device is lost or wiped, they can't be restored. Files you add to this folder later are still included.",
+      confirmLabel: "Leave them out",
+    }))) return;
+    try {
+      await setBackupSkipKeys(keys, skip);
+      qc.invalidateQueries({ queryKey: ["systemSettings"] });
+      toast.success(skip ? `${keys.length} left out of backups` : `${keys.length} included in backups again`);
+    } catch (e) { toast.error(e?.message || "Couldn't change that"); }
+  };
+
+  // ── Deleting folders (select mode, folder grid) ─────────────────────
   const toggleFolderSelect = (name) => setSelectedFolders((s) => { const n = new Set(s); n.has(name) ? n.delete(name) : n.add(name); return n; });
   // Forget a folder once it's empty: drop it from the saved order and clear its owners.
   const forgetFolder = async (name) => {
@@ -776,31 +851,28 @@ export default function AssetsLibrary() {
   const deleteSelectedFolders = async (mode) => {
     const names = [...selectedFolders].filter(isUser);
     if (!names.length) return;
+    setFolderDeleteOpen(false);
     if (mode === "all") {
       const files = names.flatMap(folderFiles);
-      const inUse = files.filter((i) => usage[i.id]).length;
-      const warn = inUse ? ` ${inUse} of them ${inUse === 1 ? "is" : "are"} in use (an avatar, background or post) and will show as missing there.` : "";
-      setFolderDeleteOpen(false);
-      if (!(await confirm(`Permanently delete ${names.length === 1 ? "this folder" : `these ${names.length} folders`} and ${files.length} file${files.length === 1 ? "" : "s"}?${warn} This can't be undone.`))) { setFolderDeleteOpen(true); return; }
+      const inUse = files.filter((i) => Object.keys(usesAfterDelete(i)).length).length;
+      const warn = inUse ? ` ${inUse} of them ${inUse === 1 ? "is" : "are"} still in use elsewhere, so ${inUse === 1 ? "it stays" : "those stay"} stored on this device.` : "";
+      if (!(await confirm({
+        title: `Delete ${names.length === 1 ? "this folder" : `${names.length} folders`} and ${files.length} item${files.length === 1 ? "" : "s"}?`,
+        body: `This permanently removes them from this device.${warn} This can't be undone.`,
+        confirmLabel: "Delete", destructive: true,
+      }))) { setFolderDeleteOpen(true); return; }
     }
-    setFolderDeleteOpen(false);
     setBulkBusy(true);
-    let removed = 0, kept = 0, deleted = 0, failed = 0;
+    let removed = 0, moved = 0, deleted = 0, failed = 0;
     for (const name of names) {
       const list = folderFiles(name);
       let bad = 0;
-      if (mode === "all") {
-        bad = await deleteItems(list);
-        deleted += list.length - bad;
-      } else {
-        for (const item of list) {
-          try {
-            if (item.isMedia) { bad++; continue; }
-            if (item.asset) await base44.entities.ImageAsset.update(item.asset.id, { folder: UNORGANIZED_FOLDER });
-            else await base44.entities.ImageAsset.create({ name: item.name && item.name !== item.id ? item.name : "Image", image_url: item.url, folder: UNORGANIZED_FOLDER, is_gif: item.isGif, created_date: new Date().toISOString() });
-            kept++;
-          } catch { bad++; }
-        }
+      for (const item of list) {
+        try {
+          if (mode === "all") { await removeStored(item); deleted++; }
+          else if (item.asset) { await base44.entities.ImageAsset.update(item.asset.id, { folder: UNORGANIZED_FOLDER }); moved++; }
+          else { await base44.entities.ImageAsset.create(recordFor(item, { folder: UNORGANIZED_FOLDER })); moved++; }
+        } catch { bad++; }
       }
       failed += bad;
       // Only forget the folder once nothing is left in it.
@@ -811,25 +883,8 @@ export default function AssetsLibrary() {
     await loadImages();
     setBulkBusy(false);
     stopSelecting();
-    const fl = `${removed} folder${removed === 1 ? "" : "s"}`;
-    if (failed) toast.error(`${failed} file${failed === 1 ? "" : "s"} couldn't be ${mode === "all" ? "deleted" : "moved"} — their folder was left in place`);
-    else if (mode === "all") toast.success(`Deleted ${fl} and ${deleted} file${deleted === 1 ? "" : "s"}`);
-    else toast.success(kept ? `Deleted ${fl} — ${kept} file${kept === 1 ? "" : "s"} moved to ${UNORGANIZED_FOLDER}` : `Deleted ${fl}`);
-  };
-
-  const bulkDelete = async () => {
-    const n = selectedItems.length;
-    const inUse = selectedItems.filter((i) => usage[i.id]).length;
-    const warn = inUse ? ` ${inUse} of them ${inUse === 1 ? "is" : "are"} in use (an avatar, background or post) and will show as missing there.` : "";
-    if (!(await confirm(`Permanently delete ${n} image${n === 1 ? "" : "s"}?${warn} This can't be undone.`))) return;
-    setBulkBusy(true);
-    const failed = await deleteItems(selectedItems);
-    qc.invalidateQueries({ queryKey: ["imageAssets"] });
-    await loadImages();
-    setBulkBusy(false);
-    stopSelecting();
-    if (failed) toast.error(`${failed} couldn't be deleted`);
-    else toast.success(`Deleted ${n} image${n === 1 ? "" : "s"}`);
+    if (failed) toast.error(`${failed} item${failed === 1 ? "" : "s"} couldn't be ${mode === "all" ? "deleted" : "moved"}, so ${failed === 1 ? "its folder was" : "their folders were"} kept.`);
+    else toast.success(`Deleted ${removed} folder${removed === 1 ? "" : "s"}${mode === "all" ? (deleted ? ` and ${deleted} item${deleted === 1 ? "" : "s"}` : "") : (moved ? ` · ${moved} item${moved === 1 ? "" : "s"} moved to “${UNORGANIZED_FOLDER}”` : "")}`);
   };
 
   // What the grid shows: search results (across every folder), the open
@@ -843,19 +898,19 @@ export default function AssetsLibrary() {
   const selectableInView = gridItems.filter((i) => !i.refOnly);
   const allSelected = selectableInView.length > 0 && selectableInView.every((i) => selectedKeys.has(i.key));
   const userFolderNames = orderedFolders.filter(isUser);
-  // Select mode on the folder grid picks folders (to delete), not files.
-  const folderMode = selecting && !inFolder && !searching;
-  const allFoldersSelected = userFolderNames.length > 0 && userFolderNames.every((f) => selectedFolders.has(f));
   const openUser = inFolder && isUser(openFolder);
   const ownerRec = openUser ? assetFolderByName[openFolder] : null;
   const ownerIds = (ownerRec && Array.isArray(ownerRec.owner_alter_ids)) ? ownerRec.owner_alter_ids : [];
+  const folderBackupKeys = inFolder ? [...new Set(folderList.map(backupKeyOf).filter(Boolean))] : [];
+  const folderAllSkipped = folderBackupKeys.length > 0 && folderBackupKeys.every((k) => backupSkipSet.has(k));
 
   const imageGrid = (list, showFolder) => (
     <>
       <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
         {list.slice(0, limit).map((item) => (
-          <Thumb key={item.key} item={item} onSaveToLibrary={saveToLibrary} onRename={renameAsset} onMove={moveAsset} onDelete={del} onSaveDevice={saveItemToDevice}
-            onToggleBackup={toggleBackupSkip} backupSkipped={isBackupSkipped(item)}
+          <Thumb key={item.key} item={item} onOpen={setPreview} onRename={renameItem} onSave={saveItem} onMove={openMove} onDelete={del}
+            moveBlockedTitle={moveBlockedFor(item)}
+            backupSkipped={isBackupSkipped(item)} onToggleBackup={backupKeyOf(item) ? toggleBackupSkip : undefined}
             selecting={selecting} selected={selectedKeys.has(item.key)} onToggle={toggleSelect} showFolder={showFolder} />
         ))}
       </div>
@@ -904,7 +959,7 @@ export default function AssetsLibrary() {
               className="h-9 px-3 flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium disabled:opacity-60 flex-shrink-0">
               {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Upload
             </button>
-            <input ref={fileRef} type="file" accept="*/*" multiple hidden onChange={handleFiles} />
+            <input ref={fileRef} type="file" multiple hidden onChange={handleFiles} />
           </div>
         )}
         {/* Organisation rules: where each kind of image is filed by default
@@ -925,7 +980,7 @@ export default function AssetsLibrary() {
               </label>
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
-              {Object.keys(DEFAULT_PREFIX_FOLDERS).filter((k) => k !== "fixed").map((k) => (
+              {Object.keys(DEFAULT_PREFIX_FOLDERS).filter((k) => k !== "fixed" && k !== "file" && k !== "chatfile").map((k) => (
                 <label key={k} className="flex items-center gap-2 text-xs">
                   <span className="w-36 flex-shrink-0 text-muted-foreground truncate" title={PREFIX_LABELS[k] || k}>{PREFIX_LABELS[k] || k}</span>
                   <Input value={rules.folders[k] ?? ""} placeholder="Other"
@@ -959,18 +1014,14 @@ export default function AssetsLibrary() {
             <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/60 flex-shrink-0" />
             <span className="font-medium truncate flex-1 min-w-0">{openFolder}</span>
             <span className="text-[0.625rem] text-muted-foreground flex-shrink-0">{folderList.length}</span>
-            {!selecting && folderList.some((i) => !i.refOnly) && (() => {
-              const real = folderList.filter((i) => !i.refOnly);
-              const allSkipped = real.every(isBackupSkipped);
-              return (
-                <button type="button" onClick={() => setFolderBackupSkip(real, !allSkipped)}
-                  title={allSkipped ? "Everything here is skipped in backups — tap to include it again" : "Leave every file in this folder out of backups"}
-                  aria-label={allSkipped ? "Include this folder in backups" : "Skip this folder in backups"}
-                  className={`p-1 rounded hover:bg-muted/60 flex-shrink-0 ${allSkipped ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground hover:text-foreground"}`}>
-                  {allSkipped ? <CloudOff className="w-3.5 h-3.5" /> : <Cloud className="w-3.5 h-3.5" />}
-                </button>
-              );
-            })()}
+            {!selecting && folderBackupKeys.length > 0 && (
+              <button type="button" onClick={() => setFolderBackupSkip(folderList, !folderAllSkipped)}
+                aria-label={folderAllSkipped ? "Include this folder in backups again" : "Leave this folder out of backups"}
+                title={folderAllSkipped ? "Left out of backups — tap to include again" : "Included in backups — tap to leave this folder's files out"}
+                className={`p-1 rounded hover:bg-muted/60 flex-shrink-0 ${folderAllSkipped ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground hover:text-foreground"}`}>
+                {folderAllSkipped ? <CloudOff className="w-3.5 h-3.5" /> : <Cloud className="w-3.5 h-3.5" />}
+              </button>
+            )}
             {openUser && !selecting && (
               <span className="flex items-center gap-0.5 flex-shrink-0">
                 <button type="button" onClick={() => setOwnershipDialog(openFolder)} aria-label={ownerIds.length ? "Change owners" : "Assign owner"}
@@ -992,19 +1043,20 @@ export default function AssetsLibrary() {
           : imageGrid(filtered, true)
       ) : inFolder ? (
         folderList.length === 0
-          ? <p className="text-center py-16 text-sm text-muted-foreground">Empty — upload into this folder, or move items here.</p>
+          ? <p className="text-center py-16 text-sm text-muted-foreground">{BUILT_IN_KIND_FOLDERS.includes(openFolder)
+            ? `Empty — ${openFolder === VIDEOS_FOLDER ? "videos" : openFolder === AUDIO_FOLDER ? "audio" : "other files"} you upload or attach in chat show up here.`
+            : "Empty — upload into this folder, or move items here."}</p>
           : imageGrid(folderList, false)
       ) : orderedFolders.length === 0 ? (
         <div className="text-center py-16 text-sm text-muted-foreground">
-          {items.length === 0 ? "Nothing stored yet — upload some files, or add avatars/backgrounds anywhere in the app." : "No folders for that owner."}
+          {items.length === 0 ? "Nothing stored yet — upload some, or add avatars/backgrounds anywhere in the app." : "No folders for that owner."}
         </div>
       ) : (
         <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
           {orderedFolders.map((folder) => (
             <FolderTile key={folder} name={folder} items={byFolder[folder] || []}
-              selecting={selecting} selectable={isUser(folder)} selected={selectedFolders.has(folder)}
-              onToggle={() => toggleFolderSelect(folder)}
-              onOpen={() => { goFolder(folder); setSelectedKeys(new Set()); }} />
+              selecting={selecting} selectable={isUser(folder)} selected={selectedFolders.has(folder)} onToggle={() => toggleFolderSelect(folder)}
+              onOpen={() => { goFolder(folder); setSelectedKeys(new Set()); setSelectedFolders(new Set()); }} />
           ))}
         </div>
       )}
@@ -1013,16 +1065,12 @@ export default function AssetsLibrary() {
       {selecting && (
         <div className="fixed left-0 right-0 z-40 px-3" style={{ bottom: "calc(var(--bottom-nav-height, 56px) + var(--os-sab, 0px) + 8px)" }}>
           <div className="max-w-3xl mx-auto rounded-2xl border border-border bg-card shadow-2xl p-2 flex items-center gap-1.5">
-            <span className="text-xs font-medium px-1.5 flex-shrink-0">
-              {folderMode
-                ? (userFolderNames.length === 0 ? "No folders of yours" : `${selectedFolders.size} folder${selectedFolders.size === 1 ? "" : "s"} selected`)
-                : `${selectedKeys.size} selected`}
-            </span>
-            {folderMode && userFolderNames.length > 0 && (
-              <button type="button" onClick={() => setSelectedFolders(allFoldersSelected ? new Set() : new Set(userFolderNames))}
-                className="text-xs px-2 py-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 flex-shrink-0">
-                {allFoldersSelected ? "None" : "All"}
-              </button>
+            {!inFolder && !searching ? (
+              <span className="text-xs font-medium px-1.5 flex-shrink-0 min-w-0 truncate">
+                {selectedFolders.size ? `${selectedFolders.size} folder${selectedFolders.size === 1 ? "" : "s"} selected` : "Tap your own folders to delete them, or open one"}
+              </span>
+            ) : (
+              <span className="text-xs font-medium px-1.5 flex-shrink-0">{selectedKeys.size} selected</span>
             )}
             {(inFolder || searching) && selectableInView.length > 0 && (
               <button type="button" onClick={() => setSelectedKeys(allSelected ? new Set() : new Set(selectableInView.map((i) => i.key)))}
@@ -1031,21 +1079,32 @@ export default function AssetsLibrary() {
               </button>
             )}
             <span className="flex-1" />
-            {!folderMode && (
-              <button type="button" disabled={!selectedKeys.size || bulkBusy} onClick={() => setMoveOpen(true)}
-                className="h-8 px-2.5 rounded-lg border border-border text-xs flex items-center gap-1 disabled:opacity-40">
-                <FolderInput className="w-3.5 h-3.5" /> Move
+            {!inFolder && !searching ? (
+              <button type="button" disabled={!selectedFolders.size || bulkBusy} onClick={() => setFolderDeleteOpen(true)}
+                className="h-8 px-2.5 rounded-lg bg-destructive/10 text-destructive border border-destructive/30 text-xs flex items-center gap-1 disabled:opacity-40 flex-shrink-0">
+                {bulkBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Delete
               </button>
+            ) : (
+              <>
+                <button type="button" disabled={!selectedKeys.size || bulkBusy} onClick={() => setMoveOpen(true)}
+                  className="h-8 px-2.5 rounded-lg border border-border text-xs flex items-center gap-1 disabled:opacity-40">
+                  <FolderInput className="w-3.5 h-3.5" /> Move
+                </button>
+                <button type="button" disabled={!selectedKeys.size || bulkBusy} onClick={bulkDelete}
+                  className="h-8 px-2.5 rounded-lg bg-destructive/10 text-destructive border border-destructive/30 text-xs flex items-center gap-1 disabled:opacity-40">
+                  {bulkBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Delete
+                </button>
+              </>
             )}
-            <button type="button" disabled={(folderMode ? !selectedFolders.size : !selectedKeys.size) || bulkBusy}
-              onClick={folderMode ? () => setFolderDeleteOpen(true) : bulkDelete}
-              className="h-8 px-2.5 rounded-lg bg-destructive/10 text-destructive border border-destructive/30 text-xs flex items-center gap-1 disabled:opacity-40">
-              {bulkBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Delete
-            </button>
             <button type="button" onClick={stopSelecting} aria-label="Stop selecting" className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
           </div>
         </div>
       )}
+      {(moveOpen || moveItems) && (
+        <MoveDialog count={moveItems ? moveItems.length : selectedKeys.size} folders={userFolderNames}
+          onCancel={() => { setMoveOpen(false); setMoveItems(null); }} onMove={runMove} />
+      )}
+      {preview && <PreviewDialog item={preview} onClose={() => setPreview(null)} onSave={saveItem} />}
       {folderDeleteOpen && (
         <FolderDeleteDialog
           folders={[...selectedFolders].filter(isUser).map((name) => ({ name, count: folderFiles(name).length }))}
@@ -1053,9 +1112,6 @@ export default function AssetsLibrary() {
           onKeepFiles={() => deleteSelectedFolders("keep")}
           onDeleteAll={() => deleteSelectedFolders("all")}
         />
-      )}
-      {moveOpen && (
-        <MoveDialog count={selectedKeys.size} folders={userFolderNames} onCancel={() => setMoveOpen(false)} onMove={bulkMove} />
       )}
 
       {ownershipDialog && (

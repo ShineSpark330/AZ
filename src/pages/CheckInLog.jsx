@@ -24,7 +24,9 @@ import { formatSeverityForSymptom } from "@/lib/trackingModel";
 import { useTerms } from "@/lib/useTerms";
 import MentionTextarea from "@/components/shared/MentionTextarea";
 import { prepareAuthoredText, recordAuthoredText, isLogCommandError } from "@/lib/authoredText";
+import AlterSearchSelect from "@/components/shared/AlterSearchSelect";
 import { parseSignpostAuthors } from "@/lib/signpostAuthors";
+import RichText from "@/components/shared/RichText";
 
 // Long-press / double-click helper for re-opening a check-in in the
 // Quick Check-In modal so the user can fix mistakes after the fact.
@@ -522,7 +524,7 @@ function CheckInCard({ checkIn, altersById, symptomsById, symptomCheckIns, activ
         </div>
       ) : note ? (
         <div className="flex items-start gap-2 group">
-          <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed flex-1">{note}</p>
+          <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed flex-1"><RichText content={note} alters={noteAlters} terms={noteTerms} /></p>
           <Button
             variant="ghost"
             size="icon"
@@ -1151,6 +1153,7 @@ function toLocalInput(iso) {
 // log on that day. Optionally signed by an alter.
 function CustomNoteDialog({ open, onClose, alters }) {
   const qc = useQueryClient();
+  const terms = useTerms();
   const [text, setText] = useState("");
   const [when, setWhen] = useState("");
   const [authorId, setAuthorId] = useState("");
@@ -1163,7 +1166,7 @@ function CustomNoteDialog({ open, onClose, alters }) {
     if (isNaN(t.getTime())) { toast.error("Pick a valid date & time"); return; }
     setSaving(true);
     try {
-      const prepared = await prepareAuthoredText(text, { alters, whisper: false, chips: false, surfaceLabel: "status" });
+      const prepared = await prepareAuthoredText(text, { alters, terms, whisper: false, chips: false, surfaceLabel: "status" });
       if (prepared === null) { setSaving(false); return; }
       const author = prepared.authorIds?.[0] || authorId || null;
       const created = await base44.entities.StatusNote.create({
@@ -1188,9 +1191,11 @@ function CustomNoteDialog({ open, onClose, alters }) {
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>Add note</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <textarea
+          <MentionTextarea
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={setText}
+            alters={alters}
+            signposts
             rows={4}
             placeholder="Write a note…"
             className="w-full bg-background border border-border/60 rounded-md px-3 py-2 text-sm"
@@ -1202,13 +1207,10 @@ function CustomNoteDialog({ open, onClose, alters }) {
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span className="w-20 flex-shrink-0">Written by</span>
-            <select value={authorId} onChange={(e) => setAuthorId(e.target.value)}
-              className="flex-1 min-w-0 bg-background border border-border/60 rounded-md px-2 py-1 text-sm text-foreground">
-              <option value="">No one in particular</option>
-              {[...(alters || [])].sort((a, b) => String(a.name).localeCompare(String(b.name))).map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
+            <div className="flex-1 min-w-0">
+              <AlterSearchSelect alters={alters || []} value={authorId || null} onChange={(v) => setAuthorId(v || "")}
+                terms={terms} noneLabel="No one in particular" placeholder="No one in particular" zIndex={80} />
+            </div>
           </div>
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>

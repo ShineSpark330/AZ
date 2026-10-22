@@ -112,11 +112,12 @@ export default function ActivityMonthView({
                     <span
                       key={a.id}
                       onClick={(e) => { e.stopPropagation(); onActivityClick?.(a); }}
-                      className="inline-block w-1.5 h-1.5 rounded-full cursor-pointer"
+                      className="inline-block w-2.5 h-2.5 rounded-full cursor-pointer"
                       style={{
-                        backgroundColor: v.dashed ? "transparent" : baseColor,
-                        border: v.dashed ? `1px dashed ${baseColor}` : undefined,
-                        opacity: v.fillOpacity,
+                        // Planned events are filled in too (they used to be a
+                        // faint dashed ring that was hard to see).
+                        backgroundColor: baseColor,
+                        opacity: v.dashed ? 1 : v.fillOpacity,
                       }}
                       title={a.activity_name}
                     />

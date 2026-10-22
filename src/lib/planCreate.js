@@ -16,27 +16,12 @@
 // Callers own their UI concerns (validation, toasts, resets, query
 // invalidation); this owns exactly the writes.
 
-import { addDays, addWeeks, addMonths, addYears, format } from "date-fns";
+import { format } from "date-fns";
 import { base44 } from "@/api/base44Client";
 import { ACTIVITY_STATUSES } from "@/lib/activityStatus";
+import { expandOccurrences, maxLengthMinutes } from "@/lib/recurrenceIntervals";
 
 const todayLocalISODate = () => format(new Date(), "yyyy-MM-dd");
-
-function advance(dt, n, interval) {
-  if (interval === "daily") return addDays(dt, n);
-  if (interval === "weekly") return addWeeks(dt, n);
-  if (interval === "biweekly") return addWeeks(dt, n * 2);
-  if (interval === "monthly") return addMonths(dt, n);
-  // Yearly (birthdays, anniversaries). addYears keeps the month/day and clamps
-  // Feb 29 to Feb 28 in non-leap years.
-  if (interval === "yearly") return addYears(dt, n);
-  return dt;
-}
-
-// How many occurrences a repeat can create. A yearly plan can run much longer
-// than the 52 that suits daily/weekly/monthly (52 days is two months; 52
-// birthdays is a lifetime but 100 gives headroom).
-export const maxOccurrencesFor = (interval) => (interval === "yearly" ? 100 : 52);
 
 export async function createPlan({
   // One entry per activity in the plan: { activity_name, activity_category_ids, color? }
@@ -56,6 +41,12 @@ export async function createPlan({
   createTodo = false,           // derive a new Task when none is linked
   todoTitle = "",
 }) {
+  // A repeating plan can't last longer than its repeat gap (a yearly plan: at
+  // most a year). Stops an end date typed years ahead from becoming a
+  // many-year "length" on every occurrence.
+  if (recurrence.interval !== "none" && durationMinutes > maxLengthMinutes(recurrence.interval)) {
+    throw new Error(`A ${recurrence.interval} plan can't be longer than ${recurrence.interval === "yearly" ? "a year" : recurrence.interval === "monthly" ? "31 days" : recurrence.interval === "biweekly" ? "2 weeks" : recurrence.interval === "weekly" ? "a week" : "a day"}. Check the end date.`);
+  }
   // "Set this plan as a to-do" — build the Task up-front so its id can flow
   // into task_id on every Activity (including recurring ones).
   let derivedTask = null;
@@ -74,10 +65,7 @@ export async function createPlan({
     ? `rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     : null;
   const occurrences = recurrenceGroupId
-    ? Array.from(
-        { length: Math.max(1, Math.min(maxOccurrencesFor(recurrence.interval), recurrence.count || 1)) },
-        (_, i) => advance(timestamp, i, recurrence.interval)
-      )
+    ? expandOccurrences(timestamp, recurrence.interval, recurrence.count)
     : [timestamp];
 
   const createdIds = [];

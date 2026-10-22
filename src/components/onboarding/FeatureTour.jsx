@@ -10,6 +10,7 @@ import { useTerms } from "@/lib/useTerms";
 import { base44 } from "@/api/base44Client";
 import { markTourCompletedToday } from "@/lib/dailyTaskSystem";
 import AccessibilityFab from "@/components/accessibility/AccessibilityFab";
+import { useExperimentalOn } from "@/lib/experimentalFeatures";
 
 // alterId — ID of the alter whose profile to navigate to during profile steps.
 // tourAlterWasCreated — true if we created a temporary demo alter.
@@ -261,7 +262,7 @@ export function buildSteps(t, alterId = null, tourAlterWasCreated = false, uiV2O
       section: "alters", sectionLabel: t.Alters,
       emoji: "🖼️",
       title: "Assets",
-      body: `Every image you've stored — avatars, banners, backgrounds, bio and chat pictures — lives here, auto-sorted into folders — tap a folder to open it, and search finds images in every folder. Make your own folders, reorder and rename them, bulk-upload, tap Select to move or delete many images at once (on the folder list, Select lets you delete folders — keep their files in Unorganized or delete them too), and reuse any image anywhere a picture is accepted by tapping the 🖼 button on that upload. Any ${t.alter}'s rotating avatar/background pool also gets its own folder here (named after them), and opening this page from that ${t.alter}'s editor lands you scrolled straight to it. Videos, audio and other files attached in chat are kept in the Videos, Audio and Others folders (songs for song widgets are in Songs Audio) — rename them, save a copy to your device, or delete them from here. Every tile has icon buttons for rename, save to device, move and delete. No re-uploading and no duplicate storage.`,
+      body: `Everything you've stored — avatars, banners, backgrounds, bio and chat pictures, songs, videos and files — lives here, auto-sorted into folders — tap a folder to open it, and search finds items in every folder. Videos, audio and other files each have their own folder (Videos, Audio, Others), and songs from song widgets go in Songs Audio. Tap a picture to see it full screen with zoom. Every item has buttons for its details (type, size, length), renaming it, saving it to your device (under its own name and type), leaving it out of backups (the cloud), moving it to a folder, or deleting it (with a warning if it's still in use). Make your own folders, reorder and rename them, bulk-upload, tap Select to move or delete many items at once — or, on the folder grid, to delete your own folders (keeping their files in Unorganized, or deleting everything), and reuse any image anywhere a picture is accepted by tapping the 🖼 button on that upload. Any ${t.alter}'s rotating avatar/background pool also gets its own folder here (named after them), and opening this page from that ${t.alter}'s editor lands you scrolled straight to it. No re-uploading and no duplicate storage.`,
       route: "/assets", target: "assets-library",
       look: "the Assets page", action: null,
     },
@@ -269,7 +270,7 @@ export function buildSteps(t, alterId = null, tourAlterWasCreated = false, uiV2O
       section: "alters", sectionLabel: t.Alters,
       emoji: "📋",
       title: `${t.Alter} Profile — Tab Bar`,
-      body: `Tap any ${t.alter} card to open their profile. The tab bar at the top gives access to: Profile (bio + custom fields), Info, Board (${t.system}-wide messages to this ${t.alter}), Messages (private messages), History (${t.fronting} sessions), Notes, Journal (this ${t.alter}'s own journal entries — write one there and it's attributed to them), Lineage, Relationships, Locations (inner-world locations this ${t.alter} is in), and Options. Swipe the tab bar to see all tabs. An ${t.alter} can have a song that plays when their page opens, set in their profile style.`,
+      body: `Tap any ${t.alter} card to open their profile. The tab bar at the top gives access to: Profile (bio + custom fields), Info, Board (${t.system}-wide messages to this ${t.alter}), Messages (private messages), History (${t.fronting} sessions), Notes, Wishlist, Journal (this ${t.alter}'s own journal entries — write one there and it's attributed to them), Lineage, Relationships, Locations (inner-world locations this ${t.alter} is in), Activities, and Options. Swipe the tab bar to see all tabs. An ${t.alter} can have a song that plays when their page opens, set in their profile style.`,
       route: ai ? `/alter/${ai}` : "/Home",
       target: ai ? "alter-profile-tabs" : "alters-grid",
       look: ai ? `the highlighted tab bar at the top of the ${t.alter} profile` : `tap any ${t.alter} card to open their profile and see the tab bar`, action: null,
@@ -303,9 +304,18 @@ export function buildSteps(t, alterId = null, tourAlterWasCreated = false, uiV2O
     },
     {
       section: "alters", sectionLabel: t.Alters,
+      emoji: "💗",
+      title: "Wishlist Tab",
+      body: `The Wishlist tab holds what this ${t.alter} wishes for: an item, an activity, an experience, a goal, or a need. Type a title, pick a kind and tap Add; everything else can wait. Tap the pencil to share it with other ${t.alters} or everyone, mark it important or private, and note what's driving it and how it affects you. Wishes show how long they've been waiting. "Plan it" puts an activity wish in the planner, and "Shopping list" copies an item to the grocery list without saying whose it is. Done and Let go keep a wish in the history instead of deleting it.`,
+      route: ai ? `/alter/${ai}?tab=wishlist` : "/Home",
+      target: ai ? "alter-wishlist-add" : null,
+      look: ai ? `the highlighted "add a wish" box on the Wishlist tab` : `open an ${t.alter} profile and switch to the Wishlist tab`, action: null,
+    },
+    {
+      section: "alters", sectionLabel: t.Alters,
       emoji: "🌳",
       title: "Lineage Tab",
-      body: `The Lineage tab records this ${t.alter}'s origin events — fusions (two ${t.alters} merging), splits (one ${t.alter} splitting into multiple), dormancy periods, and returns. Events are year-only dated. Split events automatically create "Split from" relationship records in the ${t.System} Map.`,
+      body: `The Lineage tab records this ${t.alter}'s origin events — fusions (two ${t.alters} merging), splits (one ${t.alter} splitting into multiple), dormancy periods, returns, and reformations (the same ${t.alter} in a new form, with what changed and an optional new name). Events are year-only dated. Split events automatically create "Split from" relationship records in the ${t.System} Map.`,
       route: ai ? `/alter/${ai}?tab=lineage` : "/Home",
       target: ai ? "alter-profile-tabs" : null,
       look: ai ? `tap the "Lineage" tab in the highlighted tab bar` : null, action: null,
@@ -450,6 +460,14 @@ export function buildSteps(t, alterId = null, tourAlterWasCreated = false, uiV2O
     },
     {
       section: "journals", sectionLabel: "Journals",
+      emoji: "📥",
+      title: "Import Files",
+      body: `Coming from a notes app like Easy Notes? Tap "Import files" and pick one or many .txt, .md or .html files. You'll see a list first — untick any you don't want, choose a folder and, if you like, which ${t.alter} wrote them. Each file becomes a new entry dated when the file was last changed, so your old notes keep their place in time. Nothing already in your journals is changed, and files over 2 MB are skipped with a note saying which. The Journal widget on the new home screen has an Import link too.`,
+      route: "/journals", target: "journals-import",
+      look: `the highlighted "Import files" button under "New Entry" on the Journals page`, action: null,
+    },
+    {
+      section: "journals", sectionLabel: "Journals",
       emoji: "🔄",
       title: `${t.Switch} Logs Tab`,
       body: `The "${t.Switch} Logs" tab shows journal entries that were automatically created from ${t.switch} events. When you check "Journal this ${t.switch}?" in the ${t.Front} modal, the entry is saved here and linked to that specific ${t.fronting} session.`,
@@ -528,7 +546,7 @@ export function buildSteps(t, alterId = null, tourAlterWasCreated = false, uiV2O
       section: "tasks", sectionLabel: "Tasks",
       emoji: "⚙️",
       title: "Edit Tasks (Manage)",
-      body: `The Edit button opens the Task Manager inline. Here you can add tasks, edit existing ones, toggle them hidden or visible, drag to reorder within each frequency section, and delete them. Tasks can be MANUAL (tap to complete) or AUTO (completed automatically by app actions like logging a check-in).`,
+      body: `The Edit button opens the Task Manager inline. Here you can add tasks, edit existing ones, toggle them hidden or visible, drag to reorder within each frequency section, and delete them. Tasks can be MANUAL (tap to complete) or AUTO (completed automatically by app actions like logging a check-in). A MANUAL task can also record activities — pick one or more and how: Timed (runs for a set time, then checks in so you can mark it done, keep going, or move it), Start active (runs until you end it), or Just log it (done now, or for today with no time). Tapping the task then asks first, and opens its link too. Under "How it's completed" a MANUAL task can be done Once, Several times (a set number each period), as a Tally (just counts), or in Steps (a checklist that resets each period).`,
       route: "/tasks", target: "tasks-edit-btn",
       look: `the highlighted "Edit" button in the top-right of the Tasks header`, action: null,
     },
@@ -546,49 +564,165 @@ export function buildSteps(t, alterId = null, tourAlterWasCreated = false, uiV2O
       section: "activities", sectionLabel: "Activities",
       emoji: "📅",
       title: "Planner",
-      body: `A Mon–Sun week where entries sit at their real times. Press and hold empty time and drag to log something past or plan something ahead — keep dragging sideways into the next day and the plan runs past midnight, across as many days as you cover. Tap an entry to edit it — name, day, time, category, who was doing it, notes, and its outcome (done / partly / skipped / cancelled / rescheduled). Hold an entry's top or bottom edge to resize it — a plain tap just opens it. Pinch the grid (on a computer: Ctrl + scroll, add Shift for the days): up/down zooms the hours, left/right widens the days (or use the sliders button for hour height, day width, 24h vs AM/PM and the week's first day). Sleep that crosses midnight shows on both days. With the check-ins overlay on, tapping a dot opens that entry in the check-in log. The + on a day pulls from your to-do list; the chart button shows the week's totals per activity and per ${t.alter}, with your goals against them. A line marks now, and time already passed is shaded.`,
+      body: `A Mon–Sun week where entries sit at their real times. Press and hold empty time and drag to log something past or plan something ahead — keep dragging sideways into the next day and the plan runs past midnight, across as many days as you cover. Tap an entry to edit it — name, day, time, category, who was doing it, notes, and its outcome (done / partly / skipped / cancelled / rescheduled). Hold an entry's top or bottom edge to resize it — a plain tap just opens it. Pinch the grid (on a computer: Ctrl + scroll, add Shift for the days): up/down zooms the hours, left/right widens the days (or use the sliders button for hour height, day width, 24h vs AM/PM and the week's first day). Sleep that crosses midnight shows on both days. With the check-ins overlay on, tapping a dot opens that entry in the check-in log. The + on a day pulls from your to-do list. A line marks now, and time already passed is shaded.`,
       route: "/planner", target: "planner",
       look: `the week grid with the hour gutter on the left`, action: null,
     },
     {
       section: "activities", sectionLabel: "Activities",
-      emoji: "🏃",
-      title: "Activity Tracker",
-      body: `The Activity Tracker shows a weekly grid view — each day is a column, each activity block spans its time range. Tap any empty time slot to log a new activity there. Tap an existing block to edit it. Navigate weeks with the ← → arrows in the header. Choosing "Still going" inside Log Activity times it live like start/end sleep — pick what you're doing, and when you tap End it's logged automatically with the elapsed time. Every Log Activity entry also has a "Who are you with?" field to tag contacts you were with, right alongside who was fronting.`,
-      route: "/activities", target: "activities-log",
-      look: `the highlighted weekly activity grid — each column is a day, each row a time slot`, action: null,
+      emoji: "🧭",
+      title: "Calendar, Plans and Insights",
+      body: `The planner is where all your activities live — the old Activity Tracker is part of it now. Calendar shows your time as a Day, Week, Month or Year (the arrows step by whichever you pick; tap a day on the month or year to open it). Give a plan a Color tag in its details and its day is coloured on the Month and Year views; a + marks days with more than one event. Plans lists everything scheduled, with each repeating series as one row. Insights has the week's totals per activity and per ${t.alter}, your weekly goals (add and edit them there), how often plans actually happen, and an all-time tally. The gear opens the Activities page, and New starts an entry at the next hour.`,
+      route: "/planner", target: "planner-sections",
+      look: `the Calendar / Plans / Insights switch at the top of the planner`, action: null,
+    },
+    {
+      section: "activities", sectionLabel: "Activities",
+      emoji: "⚡",
+      title: "Activities Page",
+      body: `The Activities page is where your activities themselves live. Add one, nest it inside another (drag it, or select it and tap "→ here"), rename or recolour it, or delete it. Select one and tap Details to see how it's been going (times done, total time, last done, recent entries) and its Who & Feelings links: which ${t.alters} enjoy it, need it, feel obligated to it, dislike or avoid it, or tend to interrupt it ("Your own" adds link types of your own, which can count as a need or as interrupting), and which feelings it helps with or can bring up. Each ${t.alter}'s profile has an Activities tab showing their links from the other side.`,
+      route: "/activities", target: "activities-manage",
+      look: `the activity list — tap one, then Details`, action: null,
+    },
+    {
+      section: "bulletin", sectionLabel: "Bulletin Board",
+      emoji: "🗓️",
+      title: "Adding something to do",
+      body: `Above the board there's one box for anything you mean to do. Type it and it's a to-do. Open "When" and give it a day — and a time, if it has one — and it becomes a plan as well: it shows on the Activity Tracker and the timeline, and ticking it off in either place finishes it. "More options" carries what you typed into the full plan form for repeats, reminders and who it's for.`,
+      route: "/", target: "quick-task-button",
+      look: `the "What do you want to do?" box just above the bulletin board`, action: null,
+    },
+    {
+      section: "bulletin", sectionLabel: "Bulletin Board",
+      emoji: "📋",
+      title: "Bulletin Board",
+      body: `The Bulletin Board on the home screen is for ${t.system}-wide messages — announcements, reminders, notes visible to everyone. Unlike private messages (which target one specific ${t.alter}), bulletins are always visible to the whole ${t.system}.`,
+      route: "/", target: "bulletin-list",
+      look: `the highlighted Bulletin Board section — scroll down past the Quick Nav to see it`, action: null,
+    },
+    {
+      section: "bulletin", sectionLabel: "Bulletin Board",
+      emoji: "💬",
+      title: "@ Mentions & Comments",
+      body: `Type @ in a bulletin post to mention an ${t.alter} — they receive a notification in the inbox. Tap any bulletin to expand it and reveal the threaded comment section. Other ${t.alters} can reply and add emoji reactions. Tap the 📌 pin icon on a bulletin to pin it to the top of the board.`,
+      route: "/", target: "bulletin-list",
+      look: `the highlighted bulletin board — tap any bulletin to expand the comment thread`, action: null,
+    },
+
+    // ─── TASKS ──────────────────────────────────────────────────────────────
+    {
+      section: "tasks", sectionLabel: "Tasks",
+      emoji: "✅",
+      title: "Daily Tasks & Habits",
+      body: `The Tasks page shows recurring habits organized by frequency. Switch between Daily, Weekly, Monthly, and Yearly using the highlighted tab bar. Each task has an XP value and a streak counter. Completing tasks earns XP toward your level shown in the bar above.`,
+      route: "/tasks", target: "tasks-daily",
+      look: `the highlighted Tasks page with the frequency tabs and task cards`, action: null,
+    },
+    {
+      section: "tasks", sectionLabel: "Tasks",
+      emoji: "📊",
+      title: "XP Level Bar",
+      body: `The highlighted level bar shows your current XP level, today's progress (XP earned vs. possible), your current daily streak, and your best streak ever. The bar fills as you check off tasks. Completing every task in a day keeps your streak going.`,
+      route: "/tasks", target: "tasks-level-bar",
+      look: `the highlighted XP level bar showing your level, streak, and today's progress`, action: null,
+    },
+    {
+      section: "tasks", sectionLabel: "Tasks",
+      emoji: "🗂️",
+      title: "Frequency Tabs",
+      body: `The four tabs — Daily, Weekly, Monthly, Yearly — each show tasks for that period. A badge shows how many tasks exist in each tab. Switch between them to see and complete tasks for different time scales. Weekly/monthly/yearly tasks reset at the start of each period.`,
+      route: "/tasks", target: "tasks-freq-tabs",
+      look: `the highlighted frequency tab bar — Daily, Weekly, Monthly, Yearly`, action: null,
+    },
+    {
+      section: "tasks", sectionLabel: "Tasks",
+      emoji: "⚙️",
+      title: "Edit Tasks (Manage)",
+      body: `The Edit button opens the Task Manager inline. Here you can add tasks, edit existing ones, toggle them hidden or visible, drag to reorder within each frequency section, and delete them. Tasks can be MANUAL (tap to complete) or AUTO (completed automatically by app actions like logging a check-in). A MANUAL task can also record activities — pick one or more and how: Timed (runs for a set time, then checks in so you can mark it done, keep going, or move it), Start active (runs until you end it), or Just log it (done now, or for today with no time). Tapping the task then asks first, and opens its link too. Under "How it's completed" a MANUAL task can be done Once, Several times (a set number each period), as a Tally (just counts), or in Steps (a checklist that resets each period).`,
+      route: "/tasks", target: "tasks-edit-btn",
+      look: `the highlighted "Edit" button in the top-right of the Tasks header`, action: null,
+    },
+    {
+      section: "tasks", sectionLabel: "Tasks",
+      emoji: "📝",
+      title: "To-Do List",
+      body: `The To-Do List (/todo) is separate from habits — it's for one-off tasks with no repeat schedule. Add any item, check it off when done, and remove it when finished. Great for therapy goals, short-term errands, or anything you need to track but not repeat.`,
+      route: "/todo", target: "tasks-list",
+      look: `the To-Do List page with the task input field and checklist`, action: null,
+    },
+
+    // ─── ACTIVITIES ─────────────────────────────────────────────────────────
+    {
+      section: "activities", sectionLabel: "Activities",
+      emoji: "📅",
+      title: "Planner",
+      body: `A Mon–Sun week where entries sit at their real times. Press and hold empty time and drag to log something past or plan something ahead — keep dragging sideways into the next day and the plan runs past midnight, across as many days as you cover. Tap an entry to edit it — name, day, time, category, who was doing it, notes, and its outcome (done / partly / skipped / cancelled / rescheduled). Hold an entry's top or bottom edge to resize it — a plain tap just opens it. Pinch the grid (on a computer: Ctrl + scroll, add Shift for the days): up/down zooms the hours, left/right widens the days (or use the sliders button for hour height, day width, 24h vs AM/PM and the week's first day). Sleep that crosses midnight shows on both days. With the check-ins overlay on, tapping a dot opens that entry in the check-in log. The + on a day pulls from your to-do list. A line marks now, and time already passed is shaded.`,
+      route: "/planner", target: "planner",
+      look: `the week grid with the hour gutter on the left`, action: null,
+    },
+    {
+      section: "activities", sectionLabel: "Activities",
+      emoji: "🧭",
+      title: "Calendar, Plans and Insights",
+      body: `The planner is where all your activities live — the old Activity Tracker is part of it now. Calendar shows your time as a Day, Week, Month or Year (the arrows step by whichever you pick; tap a day on the month or year to open it). Give a plan a Color tag in its details and its day is coloured on the Month and Year views; a + marks days with more than one event. Plans lists everything scheduled, with each repeating series as one row. Insights has the week's totals per activity and per ${t.alter}, your weekly goals (add and edit them there), how often plans actually happen, and an all-time tally. The gear opens the Activities page, and New starts an entry at the next hour.`,
+      route: "/planner", target: "planner-sections",
+      look: `the Calendar / Plans / Insights switch at the top of the planner`, action: null,
+    },
+    {
+      section: "activities", sectionLabel: "Activities",
+      emoji: "⚡",
+      title: "Activities Page",
+      body: `The Activities page is where your activities themselves live. Add one, nest it inside another (drag it, or select it and tap "→ here"), rename or recolour it, or delete it. Select one and tap Details to see how it's been going (times done, total time, last done, recent entries) and its Who & Feelings links: which ${t.alters} enjoy it, need it, feel obligated to it, dislike or avoid it, or tend to interrupt it ("Your own" adds link types of your own, which can count as a need or as interrupting), and which feelings it helps with or can bring up. Each ${t.alter}'s profile has an Activities tab showing their links from the other side.`,
+      route: "/activities", target: "activities-manage",
+      look: `the activity list — tap one, then Details`, action: null,
     },
     {
       section: "activities", sectionLabel: "Activities",
       emoji: "🗓️",
       title: "Plans Have a Lifecycle",
-      body: `Future activities are plans — they render with a dashed outline so you can tell them apart from solid, logged activity blocks. Long-press any scheduled plan to mark it Done, Partial (with optional actual time), Skipped, Cancelled, or to reschedule it — or tap "Start now" to time it live and have it complete itself when you tap End (it shows under Active Activities on the Dashboard meanwhile). You can add a note when you start or finish — it's saved onto the activity and shows in its details everywhere. Past-time plans you haven't reviewed surface on the Dashboard as "Plans needing review" — resolve them in one tap, or tap Start to time one live right from there (you can turn that reminder off in Settings → Reminders). Starting or marking a plan Done asks when: "Started on time" / "Finished on time" uses the plan's own times, or pick Now or another time — so a plan you got to late, or one that ran over, keeps its real times. Done/partial count toward your activity tally; skipped and cancelled never do. On the planner each outcome has its own look: ✓ done, ◐ partly, greyed ⤼ skipped, greyed and crossed-out cancelled, ↻ rescheduled — and when you move a plan, switch off "Count as rescheduled" if you're only fixing what you entered.`,
-      route: "/activities", target: "activities-log",
-      look: `the highlighted weekly grid — long-press any plan chip to open its lifecycle menu`, action: null,
+      body: `Future activities are plans — they render with a dashed outline so you can tell them apart from solid, logged activity blocks. Tap any scheduled plan to mark it Done, Partial (with optional actual time), Skipped, Cancelled, or to reschedule it — or tap "Start now" to time it live and have it complete itself when you tap End (it shows under Active Activities on the Dashboard meanwhile). You can add a note when you start or finish — it's saved onto the activity and shows in its details everywhere. Past-time plans you haven't reviewed surface on the Dashboard as "Plans needing review" — resolve them in one tap, or tap Start to time one live right from there (you can turn that reminder off in Settings → Reminders). Starting or marking a plan Done asks when: "Started on time" / "Finished on time" uses the plan's own times, or pick Now or another time — so a plan you got to late, or one that ran over, keeps its real times. Done/partial count toward your activity tally; skipped and cancelled never do. On the planner each outcome has its own look: ✓ done, ◐ partly, greyed ⤼ skipped, greyed and crossed-out cancelled, ↻ rescheduled — and when you move a plan, switch off "Count as rescheduled" if you're only fixing what you entered.`,
+      route: "/planner", target: "planner",
+      look: `the planner grid — tap any plan to open it and pick its outcome`, action: null,
     },
     {
       section: "activities", sectionLabel: "Activities",
       emoji: "🔁",
       title: "Editing Recurring Plans",
       body: `When you edit, delete, or mark a recurring plan, you'll first be asked whether to apply your change to just this instance, this and future occurrences, or every occurrence in the series. "This instance only" splits the record off the series so future edits to the rest won't touch it. Rescheduling always stays single-instance — moving a whole series at once would corrupt the audit trail.`,
-      route: "/activities", target: "activities-log",
+      route: "/planner", target: "planner",
       look: `open any recurring plan and try Edit or Delete — the recurrence chooser appears first`, action: null,
     },
     {
       section: "activities", sectionLabel: "Activities",
       emoji: "⏱️",
       title: "Logging vs Planning",
-      body: `Past-time slots open the lean Log form: category, start/end time (with quick 15m / 30m / 1hr presets and a "from end/start" toggle), who was ${t.fronting} — a matching ${t.fronting} session is created for them, kept open if they're still ${t.fronting} now — and notes. Pick "Still going" at the top to start something now and end & log it later ("Already ended" switches back to logging it with an end time — Start Activity opens on "Still going") — you can run several at once, and they show up under "Active activities" on your dashboard (tap one to end & log it, adjust the start, or discard). Future-time slots open the richer Plan form: title, location, critical flag with lead-step reminders, optional to-do link, recurrence settings, and an optional reminder lead-time (15 min / 30 min / 1 hour / 1 day before — set the default in Settings → Reminders). Use the "Plan Activity" button to schedule from anywhere — it always opens the planning form. In Quick Check-In, picking an activity shows a thin day view beside it: hold and drag on it to set when that activity happened.`,
-      route: "/activities", target: "activities-log",
-      look: `tap a past-time slot for the log form, or a future-time slot (or the Plan Activity button) for the planning form`, action: null,
+      body: `One sheet does both. Hold and drag on empty time (or tap New): in the past it logs what happened, in the future it makes a plan. Pick the activity, the time (start + length, or start → end), Who was ${t.fronting} and Notes. Plans also get Repeat, Reminder, Critical and Location chips, and a matching to-do can be linked. "Start now" times it live — it shows under "Active activities" on your dashboard until you end it. In Quick Check-In, picking an activity shows a thin day view beside it: hold and drag on it to set when that activity happened.`,
+      route: "/planner", target: "planner",
+      look: `hold and drag on empty time in the planner, or tap New`, action: null,
     },
     {
       section: "activities", sectionLabel: "Activities",
       emoji: "📈",
       title: "Plan Completion Tracker",
-      body: `The "Plan tracker" tab on the Activities page shows how often your scheduled plans actually happen — broken down by category, time of day, and day of week. Pick a window (this week / month / last 3 months / all time) and you'll get a top-line completion percentage, an "avg reschedules" tile, a per-category list sorted by completion rate ascending so pain points come first, and a plain-text insight whenever there's a notable contrast (e.g. "you complete 92% of morning plans but only 41% of evening plans"). The same numbers appear in Therapy Reports under the Plan Completion section.`,
-      route: "/activities", target: "activities-tabs",
-      look: `the highlighted tab row — tap "Plan tracker" to see the analytics surface`, action: null,
+      body: `"Plan follow-through" under Insights on the planner shows how often your scheduled plans actually happen — broken down by category, time of day, and day of week. Pick a window (this week / month / last 3 months / all time) and you'll get a top-line completion percentage, an "avg reschedules" tile, a per-category list sorted by completion rate ascending so pain points come first, and a plain-text insight whenever there's a notable contrast (e.g. "you complete 92% of morning plans but only 41% of evening plans"). The same numbers appear in Therapy Reports under the Plan Completion section.`,
+      route: "/planner", target: "planner-sections",
+      look: `the highlighted switch — tap Insights and scroll to Plan follow-through`, action: null,
+    },
+    {
+      section: "activities", sectionLabel: "Activities",
+      emoji: "🎯",
+      title: "Goals",
+      body: `The Goals page works like notes. Write a goal at the top, then add checklist points to it: a tick box, one or more to-dos (pick existing ones or write new ones), or an activity done a number of times, in total or each week. To-dos and activities tick themselves off as they get done. The pencil edits the title and a note. A tick box that sits untouched for a week offers to split into something smaller. If you set weekly goals in the planner, one tap keeps them here.`,
+      route: "/goals", target: "goals-page", experimental: true,
+      look: `the Goals page`, action: null,
+    },
+    {
+      section: "activities", sectionLabel: "Activities",
+      emoji: "🤝",
+      title: "Needs",
+      body: `The Needs page is one place for what everyone wants. Balance shows how long it's been since each ${t.alter} got something they enjoy, need or wished for, longest first, with a quick way to plan it. Wishes lists everyone's wishes (private ones stay on their own profile). Turns is for when ${t.alters} want different things: agree who goes first, and the second turn goes in the planner. When you start an activity an ${t.alter} tends to interrupt, a small note says who and what they've been wishing for; tap Got it to carry on. Needs balance, Wishes and Goals are also home-screen widgets.`,
+      route: "/needs", target: "needs-page", experimental: true,
+      look: `the Needs page`, action: null,
     },
 
     // ─── POLLS ──────────────────────────────────────────────────────────────
@@ -664,7 +798,7 @@ export function buildSteps(t, alterId = null, tourAlterWasCreated = false, uiV2O
       section: "analytics", sectionLabel: "Analytics",
       emoji: "🎛️",
       title: "Check-In Log · Display Menu",
-      body: `On the Check-In Log, the Display menu (the round sliders button) lets you choose which entry types appear in the log: check-ins, status notes, symptoms, activities, locations, per-${t.alter} entries, and diary data. Toggling one off only hides it from this view — your data is still recorded and still appears on the Timeline. The choice persists across sessions.`,
+      body: `On the Check-In Log, the Display menu (the round sliders button) lets you choose which entry types appear in the log: check-ins, status notes, symptoms, activities, locations, per-${t.alter} entries, and diary data. Toggling one off only hides it from this view — your data is still recorded and still appears on the Timeline. The choice persists across sessions. The round + button next to it adds a note with its own date and time, optionally signed by one of your ${t.alters}. Notes written under an ${t.alter} show a coloured mood dot for each kind of emotion set with them, and a caution sign when the ${t.switch} was triggered.`,
       route: "/checkin-log", target: "checkin-log-display",
       look: `the highlighted round sliders button in the top-right of the Check-In Log header`, action: null,
     },
@@ -882,7 +1016,7 @@ export function buildSteps(t, alterId = null, tourAlterWasCreated = false, uiV2O
       section: "settings", sectionLabel: "Settings",
       emoji: "🧩",
       title: `${t.Alter} setup`,
-      body: `The ${t.Alter} setup section has: Custom Fields Manager (add text/number/toggle/dropdown fields to all ${t.alter} profiles), Relationship Types (add custom types for the ${t.System} Map), and the Archived ${t.Alters} Manager (view and restore archived profiles).`,
+      body: `The ${t.Alter} setup section has: Custom Fields Manager (add text/number/toggle/dropdown fields to all ${t.alter} profiles), Relationship Types (add custom types for the ${t.System} Map), the Archived ${t.Alters} Manager (view and restore archived profiles), and Archived contacts (find and restore contacts you've archived).`,
       route: "/settings", target: "settings-alters",
       look: `the highlighted ${t.Alter} setup section — tap its header to expand it`, action: null,
     },
@@ -914,7 +1048,7 @@ export function buildSteps(t, alterId = null, tourAlterWasCreated = false, uiV2O
       section: "settings", sectionLabel: "Settings",
       emoji: "📦",
       title: "Tracking Presets",
-      body: `The Check-in manager (Settings → Tracking setup → Check-in manager) now has a "Browse presets" button — a catalogue of things some ${t.systems} track, organised into packs like Dissociation, Trauma responses, Focus, Sensory, and Daily care. Open a pack, tick what fits, and it joins your symptoms/habits list. Everything stays editable, nothing is ever required — they're offered, not prescribed.`,
+      body: `The Check-in manager (Settings → Tracking setup → Check-in manager) now has a "Browse presets" button — a catalogue of things some ${t.systems} track, organised into packs like Dissociation, Trauma responses, Focus, Sensory, and Daily care. Open a pack, tick what fits, and it joins your symptoms/habits list. Everything stays editable, nothing is ever required — they're offered, not prescribed. Anything already in your list under a similar name ("Energy level" for "Energy") isn't added twice, and if your list already has doubles, a "Tidy up" card appears here to merge them in one go.`,
       route: "/manage-checkin", target: "symptom-presets",
       look: `the highlighted "Browse presets" button on the Symptoms tab`, action: null,
     },
@@ -938,7 +1072,7 @@ export function buildSteps(t, alterId = null, tourAlterWasCreated = false, uiV2O
       section: "settings", sectionLabel: "Settings",
       emoji: "🔒",
       title: "Data & Privacy",
-      body: `Oceans Symphony is private by design — by default, every record stays on this device only, in your browser's IndexedDB. Nothing is uploaded or synced by default; there is no account. The only ways anything leaves this device are: exporting a backup yourself, opting in to Friends mode (which sends your display name, ${t.system} name, friend code, friends list, push registration, public key and current ${t.front} at the privacy level you choose — plus any ${t.alters} you share, end-to-end encrypted), turning on cloud-backed reminders (reminder times, and their wording only if you allow it), connecting a third-party import, or turning on device sync (which copies your data to a folder you pick \u2014 a plugged-in phone or a USB stick \u2014 and never touches a network). For an extra layer of security, optionally enable AES-256 password encryption to lock everything behind a passphrase (on-device only — not end-to-end). Export a full JSON backup of everything, or import one to restore. If file downloads are blocked (e.g. the Facebook or Instagram in-app browser), use the Copy/Paste Backup alternative right below the download button — it lets you split your data into text chunks you can paste anywhere safe. Your data is fully yours and always exportable. If backups ever go stale or start failing, a small amber card appears on your home screen (and a health line under Auto-backup here) — one tap backs up on the spot. Under Auto-backup you can also lock backup files with a password and give them a plain file name, so a backup sitting in Downloads doesn't announce what it is. And if the app ever opens looking empty, "Find my data" is right on the home screen and the welcome screen — check there before setting up or importing over the top.`,
+      body: `Oceans Symphony is private by design — by default, every record stays on this device only, in your browser's IndexedDB. Nothing is uploaded or synced by default; there is no account. The only ways anything leaves this device are: exporting a backup yourself, keeping an off-device backup copy (a file you pick in Google Drive or similar), opting in to Friends mode (which sends your display name, ${t.system} name, friend code, friends list, push registration, public key and current ${t.front} at the privacy level you choose — plus any ${t.alters} you share, end-to-end encrypted), turning on cloud-backed reminders (reminder times, and their wording only if you allow it), connecting a third-party import, or turning on device sync (which copies your data to a folder you pick \u2014 a plugged-in phone or a USB stick \u2014 and never touches a network). For an extra layer of security, optionally enable AES-256 password encryption to lock everything behind a passphrase (on-device only — not end-to-end). Export a full JSON backup of everything, or pick the "Everything (.zip)" format — your data plus every picture, song, video and attached file in a single file (its data locked with your backup password when backup locking is on) — and import either one to restore. "Files as .zip" under Advanced saves just your files, under their own names. Advanced also lets you pick which file types go in, and "Back up one type at a time" saves Pictures, Audio, Videos or Attachments as their own .zip. For a big library, "Files as .zip parts" splits your files into zips of a size you choose, and "Restore parts…" puts several back at once. Files you mark with the cloud button in Assets stay out of every backup. If file downloads are blocked (e.g. the Facebook or Instagram in-app browser), use the Copy/Paste Backup alternative right below the download button — it lets you split your data into text chunks you can paste anywhere safe. Your data is fully yours and always exportable. If backups ever go stale or start failing, a small amber card appears on your home screen (and a health line under Auto-backup here) — one tap backs up on the spot. Auto-backup saves the same backup on a schedule, in whichever format you pick (.json, .txt or Everything .zip). There you can also lock backup files with a password and give them a plain file name, so a backup sitting in Downloads doesn't announce what it is. On the phone and desktop apps, "Keep a copy off this phone" (or computer) copies every backup to Google Drive, OneDrive, Dropbox or an SD card, so losing the device doesn't lose the backup. And if the app ever opens looking empty, "Find my data" is right on the home screen and the welcome screen — check there before setting up or importing over the top.`,
       route: "/settings", target: "settings-data",
       look: `the highlighted Data & Privacy section — tap its header to expand it`, action: null,
     },
@@ -982,6 +1116,22 @@ export function buildSteps(t, alterId = null, tourAlterWasCreated = false, uiV2O
       route: "/history", target: "history-archive",
       look: `the Recent Changes page with its category buckets`, action: null,
     },
+    {
+      section: "settings", sectionLabel: "Settings",
+      emoji: "🧪",
+      title: "Experimental features",
+      body: `Some newer features are still settling: Needs, Goals and Mods. They stay hidden until you switch on Experimental features in Settings → About & help. Switching it off again only hides them; anything you made in them is kept.`,
+      route: "/settings", target: "settings-about",
+      look: `About & help, then Experimental features`, action: null,
+    },
+    {
+      section: "settings", sectionLabel: "Settings",
+      emoji: "🧩",
+      title: "Mods",
+      body: `Mods are features other people made and shared as a file ending in .osmod. Tap Install on the Mods page (in the sidebar under Tools) to add one: you'll see what it adds and tick what it may see, like your ${t.alters} or who's ${t.fronting}. Each mod runs walled off with no internet access and can only change its own data, which is in your backups and stays when you remove the mod. Its pages show up in your navigation, ready to pin.`,
+      route: "/mods", target: "mods-page", experimental: true,
+      look: `the Mods page`, action: null,
+    },
 
     // ─── FRIENDS ────────────────────────────────────────────────────────────
     {
@@ -1013,7 +1163,7 @@ export function buildSteps(t, alterId = null, tourAlterWasCreated = false, uiV2O
       section: "chat", sectionLabel: `${t.System} Chat`,
       emoji: "💬",
       title: `${t.System} Chat`,
-      body: `A Discord-style chat for ${t.alters} to talk to each other. Create named channels for different topics (Daily check-in, Therapy prep, anywhere). Pick which ${t.alter} is speaking from the author dropdown — every message is signposted, so the history reads like a real back-and-forth. Reply to a message to quote it inline. @mention any ${t.alter} by name and they'll show up in their mention log. Type "/w @name [secret]" to hide just the bracketed part as a private whisper to specific ${t.alters} (leave the brackets off in chat to hide the whole message). The same "/w @name [secret]" works in bulletins, comments, and your notes (alter notes, to-do details, activity and check-in notes) too — only the bracketed part is hidden behind a tap-to-reveal bar. Make a channel "Private" to limit it to chosen ${t.alters} — it shows under Private channels with a lock, and when none of those ${t.alters} are ${t.fronting} its name is hidden and opening it asks "view anyway?" (a privacy safeguard). Organise channels into colour-coded, nestable categories, and tap Edit in the channel list to drag them around. On a phone, tap the panel button on the left of the chat header to slide the channel list in over the conversation, then tap a channel or tap outside to slide it back. Format text with the toolbar and it renders inline as you type — what you see is what you send. Chat content is NEVER included in therapy reports.`,
+      body: `A Discord-style chat for ${t.alters} to talk to each other. Create named channels for different topics (Daily check-in, Therapy prep, anywhere). Pick which ${t.alter} is speaking from the author dropdown — every message is signposted, so the history reads like a real back-and-forth. Reply to a message to quote it inline. @mention any ${t.alter} by name and they'll show up in their mention log. Type "/w @name [secret]" to hide just the bracketed part as a private whisper to specific ${t.alters} (leave the brackets off in chat to hide the whole message). The same "/w @name [secret]" works in bulletins, comments, and your notes (alter notes, to-do details, activity and check-in notes) too — only the bracketed part is hidden behind a tap-to-reveal bar. Make a channel "Private" to limit it to chosen ${t.alters} — it shows under Private channels with a lock, and when none of those ${t.alters} are ${t.fronting} its name is hidden and opening it asks "view anyway?" (a privacy safeguard). Organise channels into colour-coded, nestable categories, and tap Edit in the channel list to drag them around. On a phone, tap the panel button on the left of the chat header to slide the channel list in over the conversation, then tap a channel or tap outside to slide it back. Format text with the toolbar and it renders inline as you type — what you see is what you send. The paperclip attaches a video, song or any file at its original quality (it plays right in the chat, with tempo & pitch controls, and is kept in Assets), and pictures can be kept full size or compressed. Tap a picture in chat or bulletins to open it full screen and zoom. A deleted message leaves a placeholder; its trash icon, or the eraser in the channel header, removes them for good. Chat content is NEVER included in therapy reports.`,
       route: "/chat", target: null,
       look: `the panel button on the left of the header — tap it to slide the channel list in over the chat`, action: null,
     },
@@ -1098,14 +1248,18 @@ export default function FeatureTour({ onClose, restrictToRoute = null }) {
     }
   }, [altersLoaded]);
 
+  const experimentalOn = useExperimentalOn();
   const steps = useMemo(() => {
     const all = buildSteps(t, tourAlterId, tourAlterWasCreated, uiV2On)
       .filter((st) => !(uiV2On && st.classicOnly))
       // Desktop-only controls (the update button) aren't on screen elsewhere.
-      .filter((st) => !(st.desktopOnly && !isDesktop()));
+      .filter((st) => !(st.desktopOnly && !isDesktop()))
+      // Needs, Goals and Mods stay out of the tour until experimental
+      // features are switched on.
+      .filter((st) => !(st.experimental && !experimentalOn));
     if (!restrictToRoute) return all;
     return all.filter(s => s.route === restrictToRoute && s.section !== "welcome");
-  }, [t, tourAlterId, tourAlterWasCreated, restrictToRoute, uiV2On]);
+  }, [t, tourAlterId, tourAlterWasCreated, restrictToRoute, uiV2On, experimentalOn]);
   const [step, setStep] = useState(0);
 
   // Safety: if a page-scoped tour ends up with no steps (bad route, or every

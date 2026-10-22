@@ -27,6 +27,7 @@ import DashboardLayoutSettings from './DashboardLayoutSettings';
 import NavigationSettings from './NavigationSettings';
 import UpcomingPlansSurfacesSection from './UpcomingPlansSurfacesSection';
 import { isNative } from '@/lib/platform';
+import { useTimeFormat, setTimeFormat } from '@/lib/timeFormat';
 import { V2SpacingRow, V2AccentRow, V2ShapeRows, V2LayoutControls, V2LanguageSection } from '@/components/settings/V2DisplaySettings';
 
 const BASIC_THEMES = ['warm', 'cool', 'forest', 'sunset', 'ocean', 'berry', 'charcoal', 'ivory'];
@@ -426,6 +427,26 @@ const PRESET_PARTS = [
 ];
 
 // ── Main component — renders the WHOLE Appearance section body ─────────────────
+// 12-hour (standard) or 24-hour (military) clock for the header and widgets.
+function TimeFormatRow() {
+  const format = useTimeFormat();
+  return (
+    <div className="flex items-center gap-2.5 py-1">
+      <span className="text-xs font-medium flex-1 min-w-0">Time format</span>
+      <div className="flex gap-1.5">
+        {[["12", "12 hr (standard)"], ["24", "24 hr (military)"]].map(([val, label]) => (
+          <button key={val} type="button" onClick={() => setTimeFormat(val)}
+            className={`text-xs px-2.5 py-1 rounded-full border transition-all ${
+              format === val ? "border-primary/60 bg-primary/10 text-primary" : "border-border/50 text-muted-foreground"
+            }`}>
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function AdvancedAppearance() {
   const t = useTerms();
   const qc = useQueryClient();
@@ -1207,6 +1228,7 @@ export default function AdvancedAppearance() {
       <SubSection title="Layout" defaultOpen={false}>
         {/* New-UI bars, sizes, apps button and reset — layout, so it lives
             here with the navigation config. */}
+        <TimeFormatRow />
         <V2LayoutControls />
         <SubSection title="Dashboard" defaultOpen={false}>
           <DashboardLayoutSettings />

@@ -9,19 +9,40 @@
 // (`useTerms()`) and pass the labels in, same as navigationConfig's
 // resolveLabel pattern.
 
-import { Users, Clock, BarChart2, Settings, BookOpen, CheckSquare, ClipboardList, Sparkles, Activity, Zap, GitBranch, GitMerge, FileText, Heart, Bell, Vote, Shield, MapPin, UserRound, Pin, MessageSquare, Images, Contact, CalendarRange, History } from "lucide-react";
+import { Users, Clock, BarChart2, Settings, BookOpen, CheckSquare, ClipboardList, Sparkles, Activity, Zap, GitBranch, GitMerge, FileText, Heart, Bell, Vote, Shield, MapPin, UserRound, Pin, MessageSquare, Images, Contact, CalendarRange, History, Puzzle, Target, HeartHandshake } from "lucide-react";
+import { ALL_PAGES } from "@/utils/navigationConfig";
+import { withoutHiddenExperimental } from "@/lib/experimentalFeatures";
 
+// Pages of switched-on mods (src/lib/mods/registry.js keeps them in
+// ALL_PAGES). Callers that memo these builders add useModPagesVersion() to
+// their dependencies so a newly installed mod shows up straight away.
+const modPages = () => ALL_PAGES.filter((p) => p.isMod);
+
+// Experimental pages (Needs, Goals, Mods) drop out while that switch is off.
 export function buildNavGroups(altersLabel, systemLabel) {
+  const out = {};
+  for (const [group, items] of Object.entries(allNavGroups(altersLabel, systemLabel))) {
+    const kept = withoutHiddenExperimental(items);
+    if (kept.length) out[group] = kept;
+  }
+  return out;
+}
+
+export function buildGridItems(altersLabel, systemLabel) {
+  return withoutHiddenExperimental(allGridItems(altersLabel, systemLabel));
+}
+
+function allNavGroups(altersLabel, systemLabel) {
+  const mods = modPages().map(({ id, label, icon, path }) => ({ id, label, icon, path }));
   return {
     [systemLabel]: [
       { id: "alters",   label: altersLabel,            icon: Users,         path: "/Home" },
       { id: "presences",label: "New Presences",        icon: Sparkles,      path: "/presences" },
       { id: "chat",     label: `${systemLabel} Chat`,  icon: MessageSquare, path: "/chat" },
       { id: "friends",  label: "Friends",              icon: UserRound,     path: "/friends" },
-      { id: "planner",  label: "Planner",              icon: CalendarRange, path: "/planner" },
       { id: "contacts", label: "Contacts",             icon: Contact,       path: "/contacts" },
       { id: "groups",   label: "Groups",               icon: Users,         path: "/groups" },
-      { id: "assets",   label: "Assets",         icon: Images,        path: "/assets" },
+      { id: "assets",   label: "Assets",               icon: Images,        path: "/assets" },
       { id: "unblend",  label: "Help me unblend",      icon: Heart,         path: "/unblend" },
       { id: "get-to-know-me", label: "Get to know me", icon: Sparkles,      path: "/get-to-know-me" },
       { id: "settings", label: "Settings",             icon: Settings,      path: "/settings" },
@@ -29,9 +50,12 @@ export function buildNavGroups(altersLabel, systemLabel) {
     "Tracking": [
       { id: "checkin",      label: `${systemLabel} Meeting`,  icon: Sparkles,   path: "/system-checkin" },
       { id: "checkin-log",  label: "Check-In Log",            icon: Heart,      path: "/checkin-log" },
+      { id: "planner",      label: "Planner",                 icon: CalendarRange, path: "/planner" },
       { id: "activities",   label: "Activities",              icon: Zap,        path: "/activities" },
       { id: "tasks",        label: "Daily Tasks",             icon: CheckSquare,   path: "/tasks" },
       { id: "todo",         label: "To-Do List",              icon: ClipboardList, path: "/todo" },
+      { id: "goals",        label: "Goals",                   icon: Target,        path: "/goals" },
+      { id: "needs",        label: "Needs",                   icon: HeartHandshake, path: "/needs" },
       { id: "sleep",        label: "Sleep",                   icon: Activity,   path: "/sleep" },
     ],
     "Journal & Content": [
@@ -44,6 +68,7 @@ export function buildNavGroups(altersLabel, systemLabel) {
       { id: "therapy-report", label: "Therapy Report",  icon: FileText,    path: "/therapy-report" },
       { id: "support",        label: "Support & Learn", icon: BookOpen,    path: "/grounding" },
       { id: "safety-plan",    label: "Safety Plan",     icon: Shield,      path: "/safety-plan" },
+      { id: "mods",           label: "Mods",            icon: Puzzle,      path: "/mods" },
     ],
     "Analytics": [
       { id: "analytics",        label: "Analytics",              icon: BarChart2, path: "/analytics" },
@@ -53,10 +78,11 @@ export function buildNavGroups(altersLabel, systemLabel) {
       { id: "location-history", label: "Location History",       icon: MapPin,    path: "/location-history" },
       { id: "history-archive", label: "Recent Changes",         icon: History,   path: "/history" },
     ],
+    ...(mods.length ? { "Mods": mods } : {}),
   };
 }
 
-export function buildGridItems(altersLabel, systemLabel) {
+function allGridItems(altersLabel, systemLabel) {
   return [
     { id: "reminders",       label: "Reminders",              icon: Bell,          path: "/reminders",        color: "bg-sky-500/15 text-sky-600 dark:text-sky-400" },
     { id: "alters",          label: altersLabel,              icon: Users,         path: "/Home",             color: "bg-purple-500/15 text-purple-600 dark:text-purple-400" },
@@ -72,8 +98,10 @@ export function buildGridItems(altersLabel, systemLabel) {
     { id: "journals",        label: "Journals",               icon: BookOpen,      path: "/journals",         color: "bg-amber-500/15 text-amber-600 dark:text-amber-400" },
     { id: "tasks",           label: "Daily Tasks",            icon: CheckSquare,   path: "/tasks",            color: "bg-teal-500/15 text-teal-600 dark:text-teal-400" },
     { id: "todo",            label: "To-Do List",             icon: ClipboardList, path: "/todo",             color: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" },
+    { id: "goals",           label: "Goals",                  icon: Target,        path: "/goals",            color: "bg-rose-500/15 text-rose-600 dark:text-rose-400" },
+    { id: "needs",           label: "Needs",                  icon: HeartHandshake, path: "/needs",           color: "bg-pink-500/15 text-pink-600 dark:text-pink-400" },
     { id: "groups",          label: "Groups",                 icon: Users,         path: "/groups",           color: "bg-lime-500/15 text-lime-600 dark:text-lime-400" },
-    { id: "assets",          label: "Assets",           icon: Images,        path: "/assets",           color: "bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400" },
+    { id: "assets",          label: "Assets",                 icon: Images,        path: "/assets",           color: "bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400" },
     { id: "safety-plan",     label: "Safety Plan",            icon: Shield,        path: "/safety-plan",      color: "bg-rose-500/15 text-rose-600 dark:text-rose-400" },
     { id: "polls",           label: "Polls",                  icon: Vote,          path: "/polls",            color: "bg-violet-500/15 text-violet-600 dark:text-violet-400" },
     { id: "system-history",  label: `${systemLabel} History`, icon: GitMerge,      path: "/system-history",   color: "bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400" },
@@ -89,6 +117,8 @@ export function buildGridItems(altersLabel, systemLabel) {
     { id: "get-to-know-me",  label: "Get to know me",         icon: Sparkles,      path: "/get-to-know-me",   color: "bg-purple-500/15 text-purple-600 dark:text-purple-400" },
     { id: "presences",       label: "New Presences",          icon: Sparkles,      path: "/presences",        color: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400" },
     { id: "chat",            label: `${systemLabel} Chat`,    icon: MessageSquare, path: "/chat",             color: "bg-teal-500/15 text-teal-600 dark:text-teal-400" },
+    { id: "mods",            label: "Mods",                   icon: Puzzle,        path: "/mods",             color: "bg-violet-500/15 text-violet-600 dark:text-violet-400" },
+    ...modPages().map(({ id, label, icon, path }) => ({ id, label, icon, path, color: "bg-violet-500/15 text-violet-600 dark:text-violet-400" })),
   ];
 }
 

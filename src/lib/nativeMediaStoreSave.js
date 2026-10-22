@@ -14,8 +14,8 @@
 // No-ops on web/TWA.
 
 import { isNative } from "@/lib/platform";
-import { blobToBase64Fast } from "@/lib/blobBase64";
 import { registerPlugin } from "@capacitor/core";
+import { blobToBase64 } from "@/lib/base64";
 
 const MediaStoreSave = registerPlugin("MediaStoreSave");
 
@@ -24,17 +24,30 @@ const MediaStoreSave = registerPlugin("MediaStoreSave");
 // Files app and clearer about which app produced them.
 const DEFAULT_SUBDIR = "Oceans Symphony";
 
-// Convert a Blob to a base64 string in a way that keeps peak JS heap low.
-// The old FileReader.readAsDataURL path held TWO copies of the data URL
-// simultaneously — reader.result (~1.37× blob) plus the .slice(...) copy —
-// which OOM'd the WebView on large backups (many alter avatars stored as
-// data URIs inflate __local_images into tens of MB) and killed the native
-// bridge before the JS try/catch could see it. Reproduced by testers who
-// suddenly could not back up at all past mid-July 2026 as their local
-// image store grew. Here we read as ArrayBuffer once, then base64-encode
-// in fixed slices, pushing to a chunk array (join at the end) so the
-// biggest transient buffer is one chunk's worth, not the whole payload.
-async function blobToBase64(blob) { return blobToBase64Fast(blob); }
+// Base64 encoding goes through src/lib/base64.js: the platform encoder,
+// slice by slice, never a per-byte JS loop and never two whole-payload
+// copies at once (the v0.86.3 OOM).
+
+// Above this size a file is NOT sent across the bridge as one base64
+// string (one giant JSObject — the OOM in Play vitals). It is written to
+// the app's cache in 3 MB pieces, and the native side streams that file
+// into Downloads (saveFileToDownloads).
+const STREAM_ABOVE_BYTES = 8 * 1024 * 1024;
+// The one-message path is never tried for anything bigger than this, even
+// as a fallback: it would crash the app instead of failing politely.
+const ONE_MESSAGE_MAX_BYTES = 48 * 1024 * 1024;
+
+async function saveViaCacheFile({ blob, filename, mimeType, subdir }) {
+  const { Filesystem, Directory } = await import("@capacitor/filesystem");
+  const { writeBlobChunked } = await import("@/lib/shareFile");
+  const tmpPath = `export-tmp/${Date.now()}-${filename}`;
+  const uri = await writeBlobChunked(Filesystem, { blob, path: tmpPath, directory: Directory.Cache });
+  try {
+    return await MediaStoreSave.saveFileToDownloads({ path: uri, filename, mimeType, subdir });
+  } finally {
+    try { await Filesystem.deleteFile({ path: tmpPath, directory: Directory.Cache }); } catch { /* the OS clears the cache anyway */ }
+  }
+}
 
 // Returns { result, uri?, location?, error? }
 //   result:   "filesystem" on success, "failed" on error
@@ -47,21 +60,31 @@ export async function saveBlobToPublicDownloads({ blob, filename, mimeType, subd
   if (!(blob instanceof Blob)) {
     return { result: "failed", error: "not_a_blob" };
   }
+  const usedSubdir = typeof subdir === "string" ? subdir : DEFAULT_SUBDIR;
+  const type = mimeType || blob.type || "application/octet-stream";
+  const location = usedSubdir ? `Downloads/${usedSubdir}` : "Downloads";
+  if (blob.size > STREAM_ABOVE_BYTES) {
+    try {
+      const res = await saveViaCacheFile({ blob, filename, mimeType: type, subdir: usedSubdir });
+      console.log("[nativeMediaStoreSave] streamed:", res?.uri);
+      return { result: "filesystem", uri: res?.uri, location };
+    } catch (e) {
+      const msg = e?.message || e?.errorMessage || "save_failed";
+      console.warn("[nativeMediaStoreSave] streamed save failed:", msg);
+      if (blob.size > ONE_MESSAGE_MAX_BYTES) return { result: "failed", error: msg };
+      // Small enough to risk the one-message path below.
+    }
+  }
   try {
     const base64 = await blobToBase64(blob);
-    const usedSubdir = typeof subdir === "string" ? subdir : DEFAULT_SUBDIR;
     const res = await MediaStoreSave.saveToDownloads({
       filename,
       data: base64,
-      mimeType: mimeType || blob.type || "application/octet-stream",
+      mimeType: type,
       subdir: usedSubdir,
     });
     console.log("[nativeMediaStoreSave] saved:", res?.uri);
-    return {
-      result: "filesystem",
-      uri: res?.uri,
-      location: usedSubdir ? `Downloads/${usedSubdir}` : "Downloads",
-    };
+    return { result: "filesystem", uri: res?.uri, location };
   } catch (e) {
     const msg = e?.message || e?.errorMessage || "save_failed";
     console.warn("[nativeMediaStoreSave] failed:", msg);

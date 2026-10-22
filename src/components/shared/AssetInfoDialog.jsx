@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { getMedia, playableBlob, formatBytes, extForMime } from "@/lib/mediaStore";
-import { getLocalImage, getLocalImageId, isLocalImageUrl, dataUrlToBlob } from "@/lib/localImageStorage";
+import { isLocalImageUrl } from "@/lib/localImageStorage";
+import { readAssetBlob, formatBytes, extForMime } from "@/lib/assetFiles";
 
 // "Info" for one item in the Assets library: what the file is, how big, where
 // it lives and whether it goes into backups. Read-only — looking never changes
-// or re-saves the file.
+// or re-saves the file. (From ShineSpark330's fork, adapted to our file store.)
 
 const KIND_LABEL = { audio: "Audio", video: "Video", file: "File", image: "Picture" };
 
@@ -29,7 +29,8 @@ function formatDate(v) {
 function probeElement(kind, url) {
   return new Promise((resolve) => {
     if (!url) { resolve({}); return; }
-    const done = (v) => resolve(v);
+    const timer = setTimeout(() => resolve({}), 8000);
+    const done = (v) => { clearTimeout(timer); resolve(v); };
     if (kind === "image") {
       const img = new Image();
       img.onload = () => done({ width: img.naturalWidth, height: img.naturalHeight });
@@ -47,43 +48,24 @@ function probeElement(kind, url) {
 
 async function loadDetails(item) {
   const info = {};
-  let blob = null;
-  let remoteUrl = null;
   const kind = item.kind || "image";
-
-  if (item.isMedia) {
-    const rec = await getMedia(item.mediaId);
-    if (rec) {
-      info.mime = rec.mime || rec.blob?.type || "";
-      info.size = rec.size ?? rec.blob?.size ?? 0;
-      info.added = rec.createdAt;
-      blob = playableBlob(rec);
-    }
-    info.storage = "On this device — chat attachments (Files & videos)";
-  } else if (item.url && isLocalImageUrl(item.url)) {
-    const data = await getLocalImage(getLocalImageId(item.url));
-    if (data instanceof Blob) {
-      info.mime = data.type;
-      info.size = data.size;
-      blob = data;
-    } else if (typeof data === "string" && data) {
-      const m = /^data:([^;,]+)/.exec(data);
-      info.mime = m ? m[1] : "";
-      const comma = data.indexOf(",");
-      info.size = Math.round(((data.length - comma - 1) * 3) / 4);
-      try { blob = dataUrlToBlob(data); } catch { /* size only */ }
-    }
-    info.storage = "On this device — picture store";
-  } else if (item.url) {
-    remoteUrl = item.url;
+  const local = item.url && isLocalImageUrl(item.url);
+  const blob = item.url ? await readAssetBlob(item.url) : null;
+  if (blob) {
+    info.mime = item.mime || blob.type || "";
+    info.size = blob.size;
+  }
+  if (local) info.storage = blob ? "On this device — the app's file store" : "Not stored on this device";
+  else if (item.url) {
     try { info.host = new URL(item.url, window.location.href).host; } catch { /* leave blank */ }
     info.storage = item.refOnly ? "In use on a profile, or built into the app" : "Linked from a web address";
   }
-  if (item.asset?.created_date && !info.added) info.added = item.asset.created_date;
+  if (item.asset?.created_date) info.added = item.asset.created_date;
+  if (item.asset?.file_name) info.original = item.asset.file_name;
 
   let objectUrl = null;
   try {
-    objectUrl = blob ? URL.createObjectURL(blob) : remoteUrl;
+    objectUrl = blob ? URL.createObjectURL(blob) : (local ? null : item.url);
     if (kind !== "file") Object.assign(info, await probeElement(kind, objectUrl));
   } finally {
     if (blob && objectUrl) URL.revokeObjectURL(objectUrl);
@@ -107,6 +89,7 @@ export default function AssetInfoDialog({ item, backupSkipped = false, onClose }
 
   const rows = [
     ["Name", item.name],
+    info?.original && info.original !== item.name ? ["Original name", info.original] : null,
     ["Type", typeLabel],
     info?.mime ? ["Format", `${format ? format.toUpperCase() + " · " : ""}${info.mime}`] : null,
     info?.size ? ["Size", `${formatBytes(info.size)} (${info.size.toLocaleString()} bytes)`] : (item.size ? ["Size", formatBytes(item.size)] : null),
@@ -116,8 +99,7 @@ export default function AssetInfoDialog({ item, backupSkipped = false, onClose }
     info?.storage ? ["Stored", info.storage] : null,
     info?.host ? ["From", info.host] : null,
     info?.added ? ["Added", formatDate(info.added)] : null,
-    ["Backups", item.refOnly ? "Follows the profile it belongs to" : backupSkipped ? "Left out of backups (stays on this device)" : "Included in backups"],
-    ["ID", String(item.mediaId || item.id || "")],
+    ["Backups", item.refOnly ? "Follows the profile it belongs to" : backupSkipped ? "Left out of backups (stays on this device only)" : "Included in backups"],
   ].filter(Boolean);
 
   return (
