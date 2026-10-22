@@ -20,7 +20,9 @@ export const CHANGELOG = [
   {
     date: "October 22, 2026",
     changes: [
-      { type: "feature", text: "Settings → Appearance → Layout: choose a 12-hour (standard) or 24-hour (military) clock." },
+      { type: "feature", text: "Song widget: a new \"Play on every page of the app\" option keeps the song going everywhere. A page with its own song keeps it, and chat videos and audio pause it until they stop." },
+      { type: "improve", text: "Swiping in from the left edge now opens the menu instead of going back, and the round back button is gone." },
+      { type: "feature", text: "Settings → Appearance → Layout: choose a 12 hr or 24 hr clock." },
       { type: "improve", text: "The top bar shows your system's name in full, wrapping onto more lines if needed, and no longer shows who's fronting." },
       { type: "fix", text: "Year calendar: a day with a planned event now shows that event's colour." },
       { type: "improve", text: "Month calendar: planned events are now filled-in dots, easier to see." },

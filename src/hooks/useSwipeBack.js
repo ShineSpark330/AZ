@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { holdGestureLive } from "@/lib/holdGesture";
 
 const EDGE_THRESHOLD = 40;   // px from left edge to begin tracking
 const MIN_SWIPE_X = 60;      // minimum horizontal distance to trigger
+// Opens the menu on an edge swipe (it used to go back one page).
 const INDICATOR_FADE_MS = 400;
 
 /**
@@ -31,7 +31,6 @@ function shouldIgnoreTarget(target) {
 }
 
 export default function useSwipeBack() {
-  const navigate = useNavigate();
   const touchStart = useRef(null);
   const [indicatorProgress, setIndicatorProgress] = useState(0); // 0–1
   const [indicatorVisible, setIndicatorVisible] = useState(false);
@@ -99,8 +98,9 @@ export default function useSwipeBack() {
       // Check all gesture conditions
       if (dx < MIN_SWIPE_X) return;
       if (dy >= dx) return; // more vertical than horizontal
-      if ((window.history.state?.idx ?? 0) <= 0) return; // no history
-      navigate(-1);
+      // Swiping in from the left edge opens the menu (sidebar), the same
+      // way the header's menu button does — AppLayout listens for this.
+      window.dispatchEvent(new Event("os-open-sidebar"));
     };
 
     // Cancellation path: if iOS interrupts the gesture (incoming call,
@@ -125,7 +125,7 @@ export default function useSwipeBack() {
       document.removeEventListener("touchcancel", onTouchCancel);
       clearTimeout(fadeTimer.current);
     };
-  }, [navigate]);
+  }, []);
 
   return { indicatorVisible, indicatorProgress };
 }

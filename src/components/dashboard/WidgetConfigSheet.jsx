@@ -998,7 +998,7 @@ export default function WidgetConfigSheet({
                 {/* A range reads as "drag me"; a number box reads as "type an
                     exact value", which is the wrong affordance for a size. */}
                 {f.type === "song" && (
-                  <ProfileSongPicker value={val || null} onChange={(v) => commit(v)} subjectLabel="page" />
+                  <ProfileSongPicker value={val || null} onChange={(v) => commit(v)} subjectLabel="page" allowEverywhere />
                 )}
                 {f.type === "range" && (
                   <div>

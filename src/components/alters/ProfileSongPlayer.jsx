@@ -18,6 +18,7 @@ import { registerMedia, isOtherPlaying, subscribeIdle } from "@/lib/mediaExclusi
 import { base44 } from "@/api/base44Client";
 import { useResolvedAvatarUrl } from "@/hooks/useResolvedAvatarUrl";
 import { isOtherAudioPlaying } from "@/lib/otherAudio";
+import { registerPageSong, saveSongTime, takeSongTime } from "@/lib/songPresence";
 
 // `song` lets any surface drive this (group/location profiles, the v2 home
 // board); `alter` stays supported so existing callers are untouched.
@@ -29,7 +30,7 @@ const fmtTime = (s) => {
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 };
 
-export default function ProfileSongPlayer({ alter, song: songProp, inline = false }) {
+export default function ProfileSongPlayer({ alter, song: songProp, inline = false, everywhere = false }) {
   const song = songProp || alter?.profile_song;
   const { data: settingsList = [] } = useQuery({
     queryKey: ["systemSettings"],
@@ -42,6 +43,13 @@ export default function ProfileSongPlayer({ alter, song: songProp, inline = fals
   const resolved = useResolvedAvatarUrl(song?.ref || null);
 
   const audioRef = useRef(null);
+  // A song on a page (widget, profile, background) tells the app-wide song to
+  // step aside while it's on screen. The app-wide copy itself doesn't.
+  const hasRef = !!song?.ref;
+  useEffect(() => (everywhere || !hasRef ? undefined : registerPageSong()), [everywhere, hasRef]);
+  // Songs set to play everywhere keep their place when moving between the
+  // widget page and the rest of the app.
+  const keepPlace = everywhere || song?.everywhere === true;
   const [state, setState] = useState("idle"); // idle | blocked | playing | paused | dismissed | error
   // Bumping this rebuilds the <audio> element from scratch. A load that
   // failed once (revoked blob URL, transient read error) is not forever —
@@ -73,6 +81,14 @@ export default function ProfileSongPlayer({ alter, song: songProp, inline = fals
     audioRef.current = el;
     let cancelled = false;
     setTime(0); setDur(0);
+    if (keepPlace) {
+      const resumeAt = takeSongTime(song.ref);
+      if (resumeAt > 0) {
+        el.addEventListener("loadedmetadata", () => {
+          try { if (Number.isFinite(el.duration) && resumeAt < el.duration - 1) el.currentTime = resumeAt; } catch { /* not seekable yet */ }
+        }, { once: true });
+      }
+    }
     const unregister = registerMedia(el);
     const onPlayEv = () => { if (!cancelled) { endedRef.current = false; setState("playing"); } };
     const onPauseEv = () => { if (!cancelled && !el.ended) setState((st) => (st === "dismissed" || st === "error" ? st : "paused")); };
@@ -129,11 +145,12 @@ export default function ProfileSongPlayer({ alter, song: songProp, inline = fals
       el.removeEventListener("durationchange", onDur);
       el.removeEventListener("loadedmetadata", onDur);
       el.removeEventListener("error", onError);
+      if (keepPlace) saveSongTime(song.ref, el.currentTime);
       el.pause();
       el.src = "";
       audioRef.current = null;
     };
-  }, [enabled, song?.ref, resolved, volume, autoplay, playWhenIdle, loadNonce]);
+  }, [enabled, song?.ref, resolved, volume, autoplay, playWhenIdle, keepPlace, loadNonce]);
 
   useEffect(() => { if (audioRef.current) audioRef.current.loop = looping; }, [looping]);
 

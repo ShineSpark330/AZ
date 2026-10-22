@@ -33,7 +33,7 @@ function withTitle(value, ref, autoTitle) {
   };
 }
 
-export default function ProfileSongPicker({ value, onChange, subjectLabel = "page" }) {
+export default function ProfileSongPicker({ value, onChange, subjectLabel = "page", allowEverywhere = false }) {
   // null | "checking" | "ok" | "bad" — result of probing a pasted URL.
   const [urlState, setUrlState] = React.useState(null);
   const checkUrl = React.useCallback((url) => {
@@ -209,6 +209,20 @@ export default function ProfileSongPicker({ value, onChange, subjectLabel = "pag
             <Switch checked={value.playWhenIdle === true}
               onCheckedChange={(v) => onChange({ ...value, playWhenIdle: !!v })} />
           </label>
+          {allowEverywhere && (
+            <div className="space-y-0.5">
+              <label className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                <span>Play on every page of the app</span>
+                <Switch checked={value.everywhere === true}
+                  onCheckedChange={(v) => onChange({ ...value, everywhere: !!v })} />
+              </label>
+              {value.everywhere === true && (
+                <p className="text-[0.6875rem] text-muted-foreground">
+                  A page with its own song keeps it, and chat videos and audio pause this one until they stop.
+                </p>
+              )}
+            </div>
+          )}
           {/* Volume is saved with the SONG, so a loud track and a quiet one
               can live on two pages without re-adjusting the device each time. */}
           <div className="space-y-1">

@@ -28,6 +28,7 @@ import usePersistentNotifications from "@/hooks/usePersistentNotifications";
 import SidebarNav, { buildSidebarGroups } from "@/components/layout/SidebarNav";
 import GlobalPullToRefresh from "@/components/layout/GlobalPullToRefresh";
 import SystemSwitcherSheetHost from "@/components/systems/SystemSwitcherSheet";
+import GlobalSongHost from "@/components/alters/GlobalSongHost";
 import PackRestoreBar from "@/components/dashboard/PackRestoreBar";
 // Lazy: only pulled into the bundle for the users who need it (existing
 // installs with legacy data-URI images). Fresh installs never load it.
@@ -748,7 +749,8 @@ const handleNotifClick = (mentionLog) => {
       navigate("/");
     }
   };
-  const { indicatorVisible, indicatorProgress } = useSwipeBack();
+  // Left-edge swipe opens the menu (no on-screen indicator).
+  useSwipeBack();
 
   return (
     // Root is pinned to EXACTLY viewport height (h-screen) and clips
@@ -1196,22 +1198,8 @@ const handleNotifClick = (mentionLog) => {
           </div>
       </nav>
       
-      {/* Swipe-back indicator overlay */}
-      {indicatorVisible && (
-        <div
-          className="fixed left-0 top-1/2 -translate-y-1/2 z-[200] pointer-events-none flex items-center justify-center"
-          style={{
-            opacity: indicatorProgress,
-            transform: `translateY(-50%) translateX(${(indicatorProgress - 1) * 20}px)`,
-            transition: indicatorProgress === 0 ? `opacity ${400}ms ease, transform ${400}ms ease` : "none",
-          }}
-        >
-          <div className="w-10 h-10 rounded-full bg-foreground/20 backdrop-blur flex items-center justify-center shadow-lg">
-            <ChevronLeft className="w-5 h-5 text-foreground" />
-          </div>
-        </div>
-      )}
-
+      {/* The Song widget's "play on every page" track. */}
+      <GlobalSongHost />
       <SidebarNav open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       {/* System switcher sheet — ONE host for every chrome trigger (top-bar
           name, sidebar app icon). */}
