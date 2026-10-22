@@ -11,7 +11,7 @@
 // `onEdit` is optional — surfaces that have an editor (the planner) pass
 // one; those that don't (widgets) simply omit it.
 
-import { formatSpanMinutes } from "@/lib/formatSpan";
+import { formatSpan, formatSpanMinutes } from "@/lib/formatSpan";
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -56,6 +56,19 @@ export default function PlanDetailsSheet({ item, onClose, onEdit = null, onStart
   const task = item.task_id ? tasks.find((x) => x.id === item.task_id) : null;
   const isRunning = getActiveActivities().some((a) => a.planActivityId === item.id);
 
+  // "Event" — how far away this is: time left until it starts, how long ago it
+  // was, or how long until it ends if it's on right now.
+  const nowMs = Date.now();
+  let eventText = null;
+  if (start) {
+    const sMs = start.getTime();
+    const eMs = end ? end.getTime() : null;
+    if (sMs > nowMs) eventText = tr("planner.eventIn", { span: formatSpan(sMs - nowMs) });
+    else if (eMs && eMs > nowMs) eventText = tr("planner.eventNow", { span: formatSpan(eMs - nowMs) });
+    else if (!eMs && isRunning) eventText = tr("planner.eventNowOpen");
+    else eventText = tr("planner.eventAgo", { span: formatSpan(nowMs - (eMs || sMs)) });
+  }
+
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["activities"] });
     qc.invalidateQueries({ queryKey: ["tasks"] });
@@ -86,7 +99,7 @@ export default function PlanDetailsSheet({ item, onClose, onEdit = null, onStart
 
   const Line = ({ label, children }) => (
     <div className="flex items-baseline gap-2">
-      <span className="text-[0.6875em] uppercase tracking-wide text-muted-foreground w-16 flex-shrink-0">{label}</span>
+      <span className="text-[0.6875em] uppercase tracking-wide text-muted-foreground w-[4.75rem] flex-shrink-0">{label}</span>
       <span className="text-sm flex-1 min-w-0">{children}</span>
     </div>
   );
@@ -136,6 +149,7 @@ export default function PlanDetailsSheet({ item, onClose, onEdit = null, onStart
                 : tr("planner.noTimeSet")}
           </Line>
           {mins > 0 && <Line label={tr("planner.durLabel")}>{fmtDur(mins)}</Line>}
+          {eventText && <Line label={tr("planner.eventLabel")}>{eventText}</Line>}
           {cat && (
             <Line label={tr("planner.whatLabel")}>
               <span className="inline-flex items-center gap-1.5">

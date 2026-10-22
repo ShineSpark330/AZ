@@ -18,9 +18,24 @@
 
 export const CHANGELOG = [
   {
-    date: "October 22, 2026",
+    date: "October 23, 2026",
     changes: [
-      { type: "feature", text: "Song widget: a new \"Play on every page of the app\" option keeps the song going everywhere. A page with its own song keeps it, and chat videos and audio pause it until they stop." },
+      { type: "improve", text: "Songs no longer show a pop-up player anywhere — they just play in the background. The Song widget keeps its own controls." },
+      { type: "improve", text: "Year calendar: tapping a day now opens that month instead of the day." },
+      { type: "improve", text: "Plan details: \"Length\" is now \"Duration\", and a new \"Event\" line shows how long until it starts, how long since, or how long is left if it's on now." },
+      { type: "improve", text: "Year calendar: each event on a day is now a dot (the way the month calendar does it), and events with no colour get a faint dot in your theme's colour." },
+      { type: "fix", text: "Year calendar: a day with a logged activity now uses that activity's colour, matching the month calendar." },
+      { type: "fix", text: "Month calendar: a day like 10 no longer splits onto two lines when it also shows hours." },
+      { type: "fix", text: "Mods now follow your app's body and heading fonts, including buttons and inputs, and pick the font up even when it loads slowly." },
+      { type: "hotfix", text: "Song player: fixed a setup-order slip in the new Automatic option." },
+    ],
+  },
+  {
+    date: "October 22, 2026",
+    version: "0.270.7",
+    changes: [
+      { type: "feature", text: "Song widget: \"Start on its own\" and \"Play when there's no sound playing\" are now one option, \"Automatic. Play when no music is playing.\" An automatic song carries on when you leave the widget pages, using the widget page you opened last." },
+      { type: "feature", text: "Song widget: a new \"Play on every page of the app\" option (for songs that aren't automatic) keeps the song going everywhere, with no pop-up player. A page with its own song keeps it, and chat videos and audio pause it until they stop." },
       { type: "improve", text: "Swiping in from the left edge now opens the menu instead of going back, and the round back button is gone." },
       { type: "feature", text: "Settings → Appearance → Layout: choose a 12 hr or 24 hr clock." },
       { type: "improve", text: "The top bar shows your system's name in full, wrapping onto more lines if needed, and no longer shows who's fronting." },

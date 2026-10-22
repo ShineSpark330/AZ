@@ -52,15 +52,26 @@ async function sheetRules(sheet) {
   return [];
 }
 
+// Walks a list of rules, going into @import sheets and grouping rules
+// (@layer / @media / @supports) — a font declared inside one of those used to
+// be missed, so its mod fell back to the phone's font.
+async function collectFaces(rules, base, out) {
+  for (const r of rules) {
+    if (r.type === CSSRule.FONT_FACE_RULE) out.push({ rule: r, base });
+    else if (r.type === CSSRule.IMPORT_RULE && r.styleSheet) {
+      const sh = r.styleSheet;
+      await collectFaces(await sheetRules(sh), sh.href || base, out);
+    } else if (r.cssRules && r.cssRules.length) {
+      await collectFaces(Array.from(r.cssRules), base, out);
+    }
+  }
+}
+
 async function allFontFaceRules() {
   const out = [];
-  const walk = async (sheet, base) => {
-    for (const r of await sheetRules(sheet)) {
-      if (r.type === CSSRule.FONT_FACE_RULE) out.push({ rule: r, base: sheet.href || base });
-      else if (r.type === CSSRule.IMPORT_RULE && r.styleSheet) await walk(r.styleSheet, r.styleSheet.href || base);
-    }
-  };
-  for (const sheet of Array.from(document.styleSheets)) await walk(sheet, location.href);
+  for (const sheet of Array.from(document.styleSheets)) {
+    await collectFaces(await sheetRules(sheet), sheet.href || location.href, out);
+  }
   return out;
 }
 
@@ -71,30 +82,54 @@ const toDataUrl = (blob) => new Promise((resolve, reject) => {
   fr.readAsDataURL(blob);
 });
 
+// The best source of a face: its woff2 file when there is one, else the first.
+function pickSrc(srcText) {
+  const found = [];
+  const re = /url\(\s*["']?([^"')]+)["']?\s*\)\s*(?:format\(\s*["']?([^"')]+)["']?\s*\))?/g;
+  let m;
+  while ((m = re.exec(srcText || ""))) found.push({ url: m[1], format: (m[2] || "").toLowerCase() });
+  return found.find((f) => f.format === "woff2") || found[0] || null;
+}
+
 async function buildFontCss(vars) {
   const wanted = new Set([...familiesOf(vars["--font-sans"]), ...familiesOf(vars["--font-display"])]);
   const key = [...wanted].join("|");
   if (fontCache.has(key)) return fontCache.get(key);
-  let css = "";
+  const all = (await allFontFaceRules())
+    .map(({ rule, base }) => ({ rule, base, family: familiesOf(rule.style.getPropertyValue("font-family"))[0] }))
+    .filter((f) => f.family && wanted.has(f.family));
+  // Latin faces first. A family with no latin face (a script-specific font)
+  // takes whatever faces it has, instead of silently getting none.
+  const isLatin = (f) => { const range = f.rule.style.getPropertyValue("unicode-range"); return !range || /U\+0000-00FF/i.test(range); };
+  const haveLatin = new Set(all.filter(isLatin).map((f) => f.family));
+  const chosen = all.filter((f) => isLatin(f) || !haveLatin.has(f.family));
+
   let bytes = 0;
-  for (const { rule, base } of await allFontFaceRules()) {
+  const parts = await Promise.all(chosen.map(async ({ rule, base, family }) => {
     const st = rule.style;
-    const family = familiesOf(st.getPropertyValue("font-family"))[0];
-    if (!family || !wanted.has(family)) continue;
-    const range = st.getPropertyValue("unicode-range");
-    if (range && !/U\+0000-00FF/i.test(range)) continue;           // latin subset only
-    const m = /url\(\s*["']?([^"')]+)["']?\s*\)/.exec(st.getPropertyValue("src"));
-    if (!m) continue;
+    const src = pickSrc(st.getPropertyValue("src"));
+    if (!src) return "";
     try {
-      const blob = await (await fetch(new URL(m[1], base).href)).blob();
-      if (bytes + blob.size > FONT_CAP_BYTES) continue;
-      bytes += blob.size;
-      const url = await toDataUrl(blob);
-      css += `@font-face{font-family:"${family}";font-style:${st.getPropertyValue("font-style") || "normal"};` +
+      let url = src.url;
+      // Fonts the person uploaded already ARE data: URLs — use them as they
+      // are (fetching a data: URL is blocked on the web build's page rules).
+      if (!/^data:/i.test(url)) {
+        const blob = await (await fetch(new URL(url, base).href)).blob();
+        if (bytes + blob.size > FONT_CAP_BYTES) return "";
+        bytes += blob.size;
+        url = await toDataUrl(blob);
+      } else {
+        const size = Math.floor(url.length * 0.75);
+        if (bytes + size > FONT_CAP_BYTES) return "";
+        bytes += size;
+      }
+      return `@font-face{font-family:"${family}";font-style:${st.getPropertyValue("font-style") || "normal"};` +
              `font-weight:${st.getPropertyValue("font-weight") || "400"};src:url("${url}");}\n`;
-    } catch { /* skip this face */ }
-  }
-  fontCache.set(key, css);
+    } catch { return ""; /* skip this face */ }
+  }));
+  const css = parts.join("");
+  // Don't remember a failure: the next mod page you open tries again.
+  if (css) fontCache.set(key, css);
   return css;
 }
 
@@ -148,11 +183,18 @@ export default function ModFrame({ mod, pageId }) {
           terms: termsRef.current,
           cssVars,
           fontCss,
+          // A custom heading font applies to every heading, like in the app.
+          headingFont: document.documentElement.hasAttribute("data-heading-font"),
           dark: document.documentElement.classList.contains("dark"),
         });
-        // Never hold the mod up for fonts: give them 4 seconds at most.
-        Promise.race([buildFontCss(cssVars), new Promise((r) => setTimeout(() => r(""), 4000))])
-          .catch(() => "").then(sendInit);
+        // Never hold the mod up for fonts: give them 4 seconds at most — and
+        // if they're slower than that, hand them over when they arrive
+        // instead of leaving the mod in the phone's font for good.
+        const fontsP = buildFontCss(cssVars).catch(() => "");
+        Promise.race([fontsP, new Promise((r) => setTimeout(() => r(null), 4000))]).then((css) => {
+          sendInit(css || "");
+          if (css === null) fontsP.then((late) => { if (late) post({ type: "symphony:fonts", fontCss: late }); });
+        });
       } else if (msg.type === "symphony:height") {
         const h = Number(msg.height);
         if (Number.isFinite(h)) setHeight(Math.max(120, Math.min(h + 4, 40000)));

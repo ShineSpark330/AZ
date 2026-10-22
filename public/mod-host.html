@@ -28,6 +28,10 @@
     overflow-wrap: anywhere;
   }
   #mod-root { padding: 2px; }
+  /* Buttons, inputs and menus don't pick up the page font on their own. */
+  button, input, select, textarea { font-family: inherit; }
+  /* A heading font chosen in the app applies to every heading, as it does there. */
+  html[data-heading-font] :is(h1, h2, h3, h4, h5, h6, .font-display) { font-family: var(--font-display); }
   .os-error {
     border: 1px solid #ef4444; border-radius: 12px; padding: 12px;
     color: #ef4444; background: rgba(239, 68, 68, 0.08); font-size: 14px;

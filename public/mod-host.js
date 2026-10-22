@@ -118,6 +118,7 @@
       if (/^--[a-z0-9-]+$/i.test(k) && typeof vars[k] === "string") document.documentElement.style.setProperty(k, vars[k]);
     });
     if (init.dark) document.documentElement.classList.add("dark");
+    if (init.headingFont) document.documentElement.setAttribute("data-heading-font", "1");
     // The app's fonts, sent as data: URLs (this frame can't load anything else).
     if (typeof init.fontCss === "string" && init.fontCss) {
       var fontStyle = document.createElement("style");
@@ -156,6 +157,13 @@
         return;
       }
       start(msg);
+    } else if (msg.type === "symphony:fonts") {
+      // Fonts that took longer than the start-up wait.
+      if (typeof msg.fontCss === "string" && msg.fontCss) {
+        var lateFonts = document.createElement("style");
+        lateFonts.textContent = msg.fontCss;
+        document.head.appendChild(lateFonts);
+      }
     } else if (msg.type === "symphony:result") {
       var p = pending[msg.callId];
       if (!p) return;

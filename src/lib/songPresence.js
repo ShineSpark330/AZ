@@ -31,19 +31,53 @@ export function subscribePageSongs(fn) {
 export const saveSongTime = (ref, t) => { if (ref && Number.isFinite(t) && t > 0) lastTime.set(ref, t); };
 export const takeSongTime = (ref) => (ref && lastTime.has(ref) ? lastTime.get(ref) : 0);
 
-// The first Song widget (on any page of any board) set to play everywhere.
-// Reads the stored boards as plain data, so it works from any screen.
-export function findEverywhereSong(settingsRow) {
-  if (!settingsRow || typeof settingsRow !== "object") return null;
+// "Automatic. Play when no music is playing." One switch (it replaces the old
+// "Start on its own" + "Play when there's no sound playing" pair). Older songs
+// that only carry `autoplay` keep meaning what they did.
+export const songAutomatic = (s) => (typeof s?.automatic === "boolean" ? s.automatic : s?.autoplay !== false);
+
+// The automatic Song widget the person had open last. Leaving the widget pages
+// for Journals, Chat… keeps THAT song going, so with several automatic song
+// widgets the one on the page you last visited is the one that plays.
+let lastAuto = null;
+const lastAutoListeners = new Set();
+export function setLastAutoSong(song) {
+  if (!song?.ref || lastAuto?.ref === song.ref) return;
+  lastAuto = song;
+  for (const fn of [...lastAutoListeners]) { try { fn(); } catch { /* listener failed */ } }
+}
+export const getLastAutoSong = () => lastAuto;
+export function subscribeLastAutoSong(fn) {
+  lastAutoListeners.add(fn);
+  return () => lastAutoListeners.delete(fn);
+}
+
+// Every Song widget (any page of any board), read as plain data so it works
+// from any screen.
+export function collectSongWidgets(settingsRow) {
+  const out = [];
+  if (!settingsRow || typeof settingsRow !== "object") return out;
   for (const field of ["ui_v2_home", "experimental_home", "classic_home", "ui_v2_home_desktop"]) {
     const pages = settingsRow[field]?.pages;
     if (!Array.isArray(pages)) continue;
     for (const p of pages) {
       for (const w of Array.isArray(p?.widgets) ? p.widgets : []) {
-        const s = w?.widgetId === "song" ? w.settings?.song : null;
-        if (s?.ref && s.everywhere === true) return s;
+        const song = w?.widgetId === "song" ? w.settings?.song : null;
+        if (song?.ref) out.push(song);
       }
     }
   }
-  return null;
+  return out;
+}
+
+// What the app-wide player should play when no page has a song of its own:
+// the automatic song from the widget page opened last (if that widget still
+// exists), else the first song set to play on every page.
+export function findAppWideSong(settingsRow, last = lastAuto) {
+  const songs = collectSongWidgets(settingsRow);
+  if (last?.ref) {
+    const still = songs.find((s) => s.ref === last.ref && songAutomatic(s) && s.everywhere !== true);
+    if (still) return still;
+  }
+  return songs.find((s) => s.everywhere === true) || null;
 }

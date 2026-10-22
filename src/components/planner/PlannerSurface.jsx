@@ -127,6 +127,8 @@ export default function PlannerSurface({
   onOpenedActivity = null,
   // Deep link: start on this date (the Planner page passes ?date=).
   initialAnchor = null,
+  // Deep link: open on this zoom (day / week / month / year).
+  initialView = null,
 }) {
   const t = useTerms();
   const tr = useT();
@@ -145,6 +147,7 @@ export default function PlannerSurface({
   // year as the overview calendars the tracker had. Starts from the
   // tracker's own remembered choice so nobody's view resets.
   const [view, setViewState] = useState(() => {
+    if (initialView && VIEWS.includes(initialView)) return initialView;
     const v = lsGet("symphony_planner_view_v1", null) ?? lsGet("symphony_act_view_mode", "week");
     return VIEWS.includes(v) ? v : "week";
   });
@@ -1212,7 +1215,7 @@ export default function PlannerSurface({
             activities={activitiesWithTasks}
             weekStartsOn={prefs.weekStartsOn}
             onMonthClick={(d) => { setAnchor(d); setView("month"); }}
-            onDayClick={(d) => { setAnchor(d); setView("day"); }}
+            onDayClick={(d) => { setAnchor(d); setView("month"); }}
           />
         ) : (
         <WeekCanvas

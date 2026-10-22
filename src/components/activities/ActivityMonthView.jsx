@@ -8,6 +8,9 @@ import { datesForDay } from "@/lib/importantDates";
 import useDayRangeDrag from "@/lib/useDayRangeDrag";
 import { dayTagColor, taggedPlansForDay } from "@/lib/planTagColor";
 
+// Events without a colour get this faint theme-based dot.
+const NO_COLOR_DOT = "hsl(var(--primary) / 0.4)";
+
 /**
  * Calendar-grid view of a single month. Each day cell shows colored bars or
  * dots representing activities logged that day, plus a heatmap-style
@@ -94,12 +97,14 @@ export default function ActivityMonthView({
                 ...(drag.dragging ? { touchAction: "none" } : null),
               }}
             >
-              <div className="flex items-center justify-between mb-1">
-                <span className={`text-xs font-semibold tabular-nums ${inMonth ? "text-foreground" : "text-muted-foreground/50"} ${today ? "bg-primary text-primary-foreground rounded-full w-5 h-5 inline-flex items-center justify-center" : ""}`}>
+              {/* Day number on its own line with the hours under it, so a two-digit
+                  day never gets squeezed into wrapping ("1 / 0"). */}
+              <div className="flex flex-col items-start mb-1 leading-tight">
+                <span className={`whitespace-nowrap text-xs font-semibold tabular-nums ${inMonth ? "text-foreground" : "text-muted-foreground/50"} ${today ? "bg-primary text-primary-foreground rounded-full w-5 h-5 inline-flex items-center justify-center" : ""}`}>
                   {format(d, "d")}
                 </span>
                 {totalMin > 0 && (
-                  <span className="text-[0.5625rem] text-muted-foreground tabular-nums">
+                  <span className="whitespace-nowrap text-[0.5625rem] text-muted-foreground tabular-nums">
                     {totalMin >= 60 ? `${(totalMin / 60).toFixed(1)}h` : `${totalMin}m`}
                   </span>
                 )}
@@ -107,7 +112,9 @@ export default function ActivityMonthView({
               <div className="flex flex-wrap gap-0.5">
                 {list.slice(0, 6).map(a => {
                   const v = visualForStatus(statusFor(a));
-                  const baseColor = a.color || "hsl(var(--primary))";
+                  // No colour of its own → a faint theme colour (same soft tint
+                  // the heat-map uses), so every event still shows a dot.
+                  const baseColor = a.color || NO_COLOR_DOT;
                   return (
                     <span
                       key={a.id}
