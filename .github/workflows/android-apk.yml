@@ -1,7 +1,7 @@
 # Builds an installable Android APK (debug-signed) on GitHub's servers.
 #
 # How to use: GitHub -> Actions -> "Android APK" -> Run workflow. It also runs
-# on every push to main. When the run is green, open it and download the
+# on pushes to main, except ones that only change os.7z. When the run is green, open it and download the
 # "OceansSymphony-debug-apk" file from the Artifacts section at the bottom.
 # Unzip that download on your phone and install the .apk inside.
 #
@@ -17,6 +17,11 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    # Uploading only os.7z (before it's extracted) has nothing to build, so
+    # skip it. A push that also changes other files (the extracted project)
+    # still builds.
+    paths-ignore:
+      - 'os.7z'
 
 permissions:
   contents: read
