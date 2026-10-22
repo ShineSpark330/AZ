@@ -1,0 +1,144 @@
+import { Home, Users, Sparkles, BookOpen, CheckSquare, Clock, FileText, GitFork, BarChart2, Zap, Activity, Heart, Users2, Settings, Shield, Vote, Bell, GitMerge, MapPin, ClipboardList, UserRound, Pin, MessageSquare, Images, Contact, CalendarRange , History, Puzzle, Target, HeartHandshake } from "lucide-react";
+import { EXPERIMENTAL_PAGE_IDS, experimentalOn, subscribeExperimental } from "@/lib/experimentalFeatures";
+
+export const ALL_PAGES = [
+  { id: "home", label: "Home", path: "/", icon: Home },
+  { id: "alters", label: "Alters", path: "/Home", icon: Users },
+  { id: "checkin", label: "Meeting", path: "/system-checkin", icon: Sparkles },
+  { id: "journals", label: "Journals", path: "/journals", icon: BookOpen },
+  { id: "tasks", label: "Tasks", path: "/tasks", icon: CheckSquare },
+  { id: "todo", label: "To-Do List", path: "/todo", icon: ClipboardList },
+  { id: "timeline", label: "Timeline", path: "/timeline", icon: Clock },
+  { id: "therapy-report", label: "Therapy Report", path: "/therapy-report", icon: FileText },
+  { id: "system-map", label: "System Map", path: "/system-map", icon: GitFork },
+  { id: "analytics", label: "Analytics", path: "/analytics", icon: BarChart2 },
+  { id: "activities", label: "Activities", path: "/activities", icon: Zap },
+  { id: "sleep", label: "Sleep", path: "/sleep", icon: Activity },
+  { id: "support", label: "Support & Learn", path: "/grounding", icon: Heart },
+  { id: "safety-plan", label: "Safety Plan", path: "/safety-plan", icon: Shield },
+  { id: "groups", label: "Groups", path: "/groups", icon: Users2 },
+  { id: "polls", label: "Polls", path: "/polls", icon: Vote },
+  { id: "settings", label: "Settings", path: "/settings", icon: Settings },
+  { id: "checkin-log", label: "Check-In Log", path: "/checkin-log", icon: Heart },
+  { id: "reminders", label: "Reminders", path: "/reminders", icon: Bell },
+  { id: "system-history", label: "System History", path: "/system-history", icon: GitMerge },
+  { id: "location-history", label: "Location History", path: "/location-history", icon: MapPin },
+  { id: "history-archive", label: "Recent Changes", path: "/history", icon: History },
+  { id: "friends", label: "Friends", path: "/friends", icon: UserRound },
+  { id: "planner", label: "Planner", path: "/planner", icon: CalendarRange },
+  { id: "goals", label: "Goals", path: "/goals", icon: Target },
+  { id: "needs", label: "Needs", path: "/needs", icon: HeartHandshake },
+  { id: "contacts", label: "Contacts", path: "/contacts", icon: Contact },
+  { id: "bulletins", label: "Bulletin Board", path: "/bulletins", icon: Pin },
+  { id: "unblend", label: "Help me unblend", path: "/unblend", icon: Heart },
+  { id: "get-to-know-me", label: "Get to know me", path: "/get-to-know-me", icon: Sparkles },
+  { id: "chat", label: "System Chat", path: "/chat", icon: MessageSquare },
+  { id: "assets", label: "Assets", path: "/assets", icon: Images },
+  { id: "presences", label: "New Presences", path: "/presences", icon: Sparkles },
+  { id: "mods", label: "Mods", path: "/mods", icon: Puzzle },
+  // Pages of switched-on mods are appended at runtime (isMod: true) by
+  // src/lib/mods/registry.js, so they can be pinned like any other page.
+];
+
+// Experimental pages (src/lib/experimentalFeatures.js) leave ALL_PAGES while
+// the switch is off and go back to their own spots when it's turned on, so
+// every surface that reads ALL_PAGES follows without its own check. Saved
+// navigation configs keep their ids either way.
+const EXPERIMENTAL_BUILTINS = ALL_PAGES
+  .map((page, index) => ({ page, index }))
+  .filter(({ page }) => EXPERIMENTAL_PAGE_IDS.includes(page.id));
+
+function syncExperimentalPages() {
+  const on = experimentalOn();
+  for (const { page, index } of EXPERIMENTAL_BUILTINS) {
+    const at = ALL_PAGES.indexOf(page);
+    if (!on && at !== -1) ALL_PAGES.splice(at, 1);
+    if (on && at === -1) ALL_PAGES.splice(Math.min(index, ALL_PAGES.length), 0, page);
+  }
+}
+syncExperimentalPages();
+subscribeExperimental(syncExperimentalPages);
+
+export const DEFAULT_CONFIG = {
+  topBar: ["home", "alters", "checkin", "journals", "tasks"],
+  bottomBar: ["home", "alters", "checkin", "journals", "tasks"],
+  // Dashboard grid default: every page except "home" (since the grid lives
+  // on Home itself), ordered by intent rather than alphabetically:
+  //   1) Daily capture flow  — alters, meeting, timeline, journals, tasks, to-do, check-in log
+  //   2) Tracking            — activities, sleep, location, analytics
+  //   3) System internals    — groups, system map, system history, polls
+  //   4) Care & support      — support, safety plan, therapy report
+  //   5) Sharing & reminders — reminders, friends
+  //   6) Settings            — settings
+  dashboardGrid: [
+    "alters",
+    "checkin",
+    "timeline",
+    "journals",
+    "tasks",
+    "todo",
+    "goals",
+    "needs",
+    "checkin-log",
+    "unblend",
+    "get-to-know-me",
+    "presences",
+    "chat",
+    "activities",
+    "sleep",
+    "location-history",
+    "analytics",
+    "groups",
+    "assets",
+    "system-map",
+    "system-history",
+    "polls",
+    "support",
+    "safety-plan",
+    "therapy-report",
+    "contacts",
+    "reminders",
+    "friends",
+    "mods",
+    "settings",
+  ],
+  // `bulletins` defaults to removed because the dashboard's own
+  // bulletin block (DashboardLayoutSettings → "Bulletin board") is
+  // enabled by default, and surfacing the same content via a grid
+  // tile would just duplicate it. Users who hide the dashboard
+  // bulletin block can re-add the tile from Settings → Appearance →
+  // Navigation (or wherever NavigationSettings exposes the removed
+  // list).
+  dashboardGridRemoved: ["bulletins"], // pages explicitly removed by the user — never auto-re-added
+};
+
+// ── Sidebar customization ──────────────────────────────────────────────
+// navigation_config.sidebar = { hidden: [pageId], order: [pageId] }.
+// The sidebar keeps its groups (System / Tracking / …); the user hides
+// pages and reorders them within their group. Read by BOTH the desktop
+// sidebar and the phone drawer. navigation_config is a per-device look
+// field (src/lib/syncLook.js), so the desktop and phone can differ.
+export function applySidebarConfig(groups, sidebarCfg) {
+  const hidden = new Set(Array.isArray(sidebarCfg?.hidden) ? sidebarCfg.hidden : []);
+  const order = Array.isArray(sidebarCfg?.order) ? sidebarCfg.order : [];
+  const rank = (id, fallback) => {
+    const i = order.indexOf(id);
+    return i >= 0 ? i : order.length + fallback;
+  };
+  return (groups || [])
+    .map((g) => ({
+      ...g,
+      items: (g.items || [])
+        .map((item, i) => ({ item, r: rank(item.id, i) }))
+        .filter(({ item }) => !hidden.has(item.id))
+        .sort((a, b) => a.r - b.r)
+        .map(({ item }) => item),
+    }))
+    .filter((g) => g.items.length > 0);
+}
+
+// Every group with ALL its items in the user's order (hidden ones kept, so
+// the editor can show them unticked in place).
+export function orderSidebarGroups(groups, sidebarCfg) {
+  return applySidebarConfig(groups, { order: sidebarCfg?.order || [] });
+}
