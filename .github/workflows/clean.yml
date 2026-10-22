@@ -19,6 +19,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check os.7z is here first
+        run: |
+          echo "Files at the top of the repo:"
+          ls -la
+          # Stop before deleting anything if the archive isn't exactly os.7z
+          # at the top level (a different name, another folder or another
+          # branch would otherwise leave the repo with no archive).
+          [ -f os.7z ] || { echo "os.7z not found at the repo root on this branch - nothing deleted." >&2; exit 1; }
+
       - name: Delete everything except .github and os.7z
         run: |
           find . -mindepth 1 -maxdepth 1 \
@@ -27,6 +36,7 @@ jobs:
             ! -name 'os.7z' \
             -exec rm -rf {} +
           ls -la
+          [ -f os.7z ] || { echo "os.7z is gone after cleaning" >&2; exit 1; }
 
       - name: Commit and push
         run: |
