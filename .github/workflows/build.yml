@@ -1,0 +1,53 @@
+name: Build APK
+
+on:
+  workflow_run:
+    workflows: [ "Extract os.7z" ]
+    types: [ completed ]
+  workflow_dispatch:
+
+env:
+  APKTOOL_VERSION: "2.9.3"
+  SIGNER_VERSION: "1.3.0"
+
+jobs:
+  build:
+    # run after a successful extract, or manually
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (latest, includes extracted project/)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Check project folder
+        run: test -f project/apktool.yml || { echo "project/apktool.yml missing - run 'Extract os.7z' first" >&2; exit 1; }
+
+      - name: Download apktool and APK signer
+        run: |
+          curl -sSL -o apktool.jar "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VERSION}/apktool_${APKTOOL_VERSION}.jar"
+          curl -sSL -o uber-apk-signer.jar "https://github.com/patrickfav/uber-apk-signer/releases/download/v${SIGNER_VERSION}/uber-apk-signer-${SIGNER_VERSION}.jar"
+
+      - name: Build APK
+        run: |
+          rm -rf project/build
+          java -jar apktool.jar b -f -o unsigned.apk project
+
+      - name: Zipalign and sign
+        run: |
+          mkdir -p out
+          java -jar uber-apk-signer.jar -a unsigned.apk --allowResign -o out
+          mv out/*.apk DDAD_built.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DDAD-apk
+          path: DDAD_built.apk
