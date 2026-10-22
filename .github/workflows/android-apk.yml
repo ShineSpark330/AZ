@@ -58,6 +58,22 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "App v$APPV | gradle $GRADLEV ($GRADLEC) | commit ${GITHUB_SHA::7}"
 
+      # build.gradle is what Android shows as the app's version, and nothing in
+      # this workflow updated it, so a stale value in the repo (e.g. 0.258) kept
+      # shipping even though src/lib/appVersion.js said 0.270. Force it to match.
+      - name: Force Gradle version to match appVersion.js
+        run: |
+          FILE=android/app/build.gradle
+          CORE="${VER%%[-+]*}"
+          IFS=. read -r A B C <<< "$CORE"
+          NEW=$(( 10#${A:-0} * 1000000 + 10#${B:-0} * 1000 + 10#${C:-0} ))
+          OLD=$(grep -oP 'versionCode \K[0-9]+' "$FILE")
+          CODE=$(( NEW > OLD ? NEW : OLD ))
+          sed -i -E "s/versionName \"[^\"]*\"/versionName \"$VER\"/; s/versionCode [0-9]+/versionCode $CODE/" "$FILE"
+          grep -q "versionName \"$VER\"" "$FILE" || { echo "Could not set versionName in $FILE" >&2; exit 1; }
+          echo "build.gradle -> versionName $VER, versionCode $CODE (was $OLD)"
+          echo "- forced build.gradle to versionName \`$VER\`, versionCode \`$CODE\`" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build web app
         run: npm run build
 
@@ -79,7 +95,15 @@ jobs:
         working-directory: android
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew clean assembleDebug --no-daemon
+
+      - name: Verify the APK reports the right version
+        run: |
+          APK=$(ls android/app/build/outputs/apk/debug/*.apk | head -1)
+          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          GOT=$("$AAPT2" dump badging "$APK" | grep -oP "versionName='\K[^']+" | head -1)
+          echo "APK versionName: $GOT (expected $VER)"
+          [ "$GOT" = "$VER" ] || { echo "Version mismatch in built APK" >&2; exit 1; }
 
       - name: Keep the APK as a run artifact
         uses: actions/upload-artifact@v4
