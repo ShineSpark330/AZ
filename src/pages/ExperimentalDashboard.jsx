@@ -1,0 +1,2457 @@
+// The experimental phone-like homescreen (Phase 1 MVP) — a second renderer
+// over the same self-fetching dashboard components, driven by
+// SystemSettings.experimental_home and the widget registry.
+//
+// Rendered BY Dashboard.jsx (branch at its return statement) so every
+// modal, query, and deep-link effect keeps living there; this component
+// receives an `api` bundle of handlers/data instead of re-implementing
+// Dashboard's plumbing.
+//
+// Phase 1 scope: one page, CSS-grid canvas with column-span sizing,
+// dnd-kit reorder in edit mode, per-widget display mode, app drawer
+// (apps + add-widget), persistent quick-action bar. Pages/swipe,
+// shortcuts, frequently-opened, Current Focus, and style modes are later
+// phases (see the roadmap in the plan).
+//
+// A11y: when a11y-mode is on we render a single-column stack with
+// up/down reorder buttons and no drag — the canvas uses inline grid
+// styles, which the html.a11y-mode CSS collapse can't reach, so this
+// branch must live in JS.
+
+import { createPortal } from "react-dom";
+import SetupPackSheet from "@/components/dashboard/SetupPackSheet";
+import UndoRedoButtons, { markMachineWrite } from "@/components/v2/UndoRedoHistory";
+import React, { useMemo, useState, useCallback, useRef, useEffect } from "react";
+import { base44 } from "@/api/base44Client";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { motion, AnimatePresence } from "framer-motion";
+import { ChevronLeft, CheckSquare, Check, X, Plus, LayoutGrid, ArrowUp, ArrowDown,
+  Undo2, Grid2x2, Star, Trash2, Settings2, ChevronUp, ChevronDown,
+  ArrowUpToLine, ArrowDownToLine, Eye, EyeOff, Home,
+} from "lucide-react";
+import {
+  DndContext, MouseSensor, TouchSensor, useSensor, useSensors, closestCenter, useDroppable,
+} from "@dnd-kit/core";
+import {
+  SortableContext, rectSortingStrategy, arrayMove, useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { WIDGET_REGISTRY, widgetLabel, widgetAutoLabel } from "@/lib/widgetRegistry";
+import {
+  resolveExperimentalHome, effectiveMode, newInstanceId, newPageId,
+  HOME_STYLE_IDS, resolveOverlaps, hasOverlaps,
+  compactVertically, findFreeCell, stampBoardChanges, PAGE_SHOW_AS, SHOW_AS_MAX_WIDTH,
+} from "@/lib/experimentalHome";
+import { getAccessibilitySettings } from "@/lib/useAccessibility";
+import { useTerms } from "@/lib/useTerms";
+import { useFrontingIds, useAlterSorter } from "@/lib/alterSort";
+import AlterSortToggle from "@/components/shared/AlterSortToggle";
+import { useEdgeResize } from "@/hooks/useEdgeResize";
+import { useFreeMove } from "@/hooks/useFreeMove";
+import {
+  pickLook, mergeLook, lookToStyle, lookExtraCss, resolveUserStyles, userStyleId, newStyleId,
+  USER_STYLE_PREFIX, lookCoverage, OFF, SHADOW_PRESETS,
+} from "@/lib/widgetLook";
+import { HOME_STYLES, getStyleShell, getStyleLook } from "@/lib/homeStyles";
+import WidgetConfigSheet from "@/components/dashboard/WidgetConfigSheet";
+const UiEditSheetBody = React.lazy(() => import("@/components/v2/UiEditSheet"));
+import {
+  Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription,
+} from "@/components/ui/drawer";
+import QuickCheckinButtons from "@/components/dashboard/QuickCheckinButtons";
+import AppDrawer from "@/components/dashboard/AppDrawer";
+import PinnedAltersGallery from "@/components/alters/PinnedAltersGallery";
+import AltersBarCard from "@/components/v2/AltersBarCard";
+import { readPinnedBar, pinnedBarPatch, pinnedBarLook, openBarsEditor } from "@/lib/barsModel";
+import { usePeekHeight, PeekHandle } from "@/components/v2/PeekResize";
+import AssetPickerModal from "@/components/shared/AssetPickerModal";
+import { useResolvedAvatarUrl } from "@/hooks/useResolvedAvatarUrl";
+import { boxStyle } from "@/v2/primitives";
+import { useRotatingImageUrl } from "@/lib/imageRotation";
+import PageBackground, { resolveBackground } from "@/components/v2/PageBackground";
+import { DOCK_KEY } from "@/components/v2/V2Frame";
+import ProfileSongPlayer from "@/components/alters/ProfileSongPlayer";
+import { SearchableMultiList } from "@/v2/widgets";
+
+function useGridCols(phoneCols = 4, lockToPhone = false) {
+  // v2 grid: twice as dense as v1 (4/8/12 instead of 2/4/6) so app-shortcut
+  // icons can be quarter-width on phones; stored v1 spans are doubled on
+  // read (see resolveExperimentalHome) so layouts keep their proportions.
+  // Phones can opt into 5 columns (home.grid.phoneCols).
+  // lockToPhone (free-layout pages): the user placed each widget in a
+  // specific CELL of the phone grid — re-bucketing to 8/12 columns on a
+  // wider screen (landscape!) shoved everything into the left half. The
+  // arrangement keeps its column count; the cells just get wider.
+  const calc = React.useCallback(
+    () => (typeof window === "undefined" || lockToPhone
+      ? phoneCols
+      : window.innerWidth >= 1024 ? 12 : window.innerWidth >= 640 ? 8 : phoneCols),
+    [phoneCols, lockToPhone]
+  );
+  const [cols, setCols] = useState(calc);
+  React.useEffect(() => {
+    setCols(calc());
+    const onResize = () => setCols(calc());
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [calc]);
+  return cols;
+}
+
+// Per-widget appearance overrides. They're emitted as CSS VARIABLES on the
+// widget's own wrapper, so anything inside it — including shadcn cards and
+// buttons that read --radius — picks them up by inheritance. That's what
+// makes "settings apply everywhere by default, individual widgets can
+// override" true rather than aspirational.
+// A widget's visual layer = its saved style (if it uses one) with its own
+// overrides on top, emitted as CSS variables on its wrapper so everything
+// inside inherits them. See src/lib/widgetLook.js.
+export function widgetLookFor(settings = {}, userStyles = [], pageStyleId = "current") {
+  const styleId = userStyleId(settings.style);
+  const saved = styleId ? userStyles.find((s) => s.id === styleId) : null;
+  // Base: the built-in style (the widget's override, else the page's) —
+  // then a saved user style, then the widget's own fields. One box, one
+  // border: styles no longer paint a second one behind the widget.
+  const builtinId = HOME_STYLE_IDS.includes(settings.style) ? settings.style : pageStyleId;
+  return mergeLook(mergeLook(getStyleLook(builtinId), saved?.look || {}), pickLook(settings));
+}
+
+const TRASH_ID = "__widget_trash";
+// Drop target that only exists while a widget is being dragged — hold a
+// widget, drag it here, let go. Nothing to mis-tap the rest of the time.
+function TrashZone({ active }) {
+  const { setNodeRef, isOver } = useDroppable({ id: TRASH_ID });
+  return (
+    <div
+      ref={setNodeRef}
+      aria-hidden={!active}
+      data-widget-trash="1"
+      className="fixed left-1/2 -translate-x-1/2 z-[60] flex items-center gap-2 px-4 py-2 rounded-full border text-sm transition-all pointer-events-none"
+      style={{
+        bottom: "calc(var(--bottom-nav-height, 56px) + var(--os-sab) + 12px)",
+        opacity: active ? 1 : 0,
+        transform: `translateX(-50%) scale(${isOver ? 1.08 : 1})`,
+        background: isOver ? "#ef4444" : "color-mix(in srgb, var(--color-bg) 95%, transparent)",
+        color: isOver ? "hsl(var(--destructive-foreground))" : "hsl(var(--muted-foreground))",
+        borderColor: isOver ? "hsl(var(--destructive))" : "hsl(var(--border))",
+        backdropFilter: "blur(8px)",
+      }}
+    >
+      <X className="w-4 h-4" /> Drop to remove
+    </div>
+  );
+}
+
+function SortableWidget({ widget, def, editMode, gridCols, gridRef, api, topRowOffset = 0, rowPx = 80, onDragTarget = null, onRemove, onSpan, onMode, onSettings, a11yStack, onMove, onConfigure, onEnterEdit = null, styleMode = "current", free = false, flowView = false, onPos, userStyles = [], pickLookMode = false, pickLookSelected = false, pickLookIsSource = false, onPickLookToggle, onHoldSelect = null, collapsed = false }) {
+  const holdSel = useRef(null);
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: widget.instanceId,
+    disabled: !editMode || a11yStack || free,
+  });
+  const t = useTerms();
+  const defLabel = widgetAutoLabel(def, widget.settings, t);
+  const mode = effectiveMode(widget.mode, def.supportsModes);
+  const spanCols = Math.min(widget.span?.cols || def.defaultSpan?.cols || 4, gridCols);
+  const spanRows = widget.span?.rows || def.defaultSpan?.rows || 1;
+
+  // Hold a quiet part of a widget to open its options. "Quiet" means the
+  // press didn't land on something that answers for itself — a button, a
+  // field, or a region that owns its own hold (an alter row's level rail,
+  // the activity grid's block selection). Only outside edit mode; in edit
+  // mode a hold lifts the widget instead.
+  const optionsHoldTimer = useRef(null);
+  const optionsHoldOrigin = useRef(null);
+  const cancelOptionsHold = () => {
+    if (optionsHoldTimer.current) clearTimeout(optionsHoldTimer.current);
+    optionsHoldTimer.current = null;
+    optionsHoldOrigin.current = null;
+  };
+  useEffect(() => cancelOptionsHold, []);
+  const optionsHold = editMode ? {} : {
+    onPointerDown: (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      if (e.target.closest?.("button, a, input, textarea, select, [contenteditable='true'], [role='button'], [role='slider'], [data-own-hold], [data-cell-key], [data-day-key]")) return;
+      optionsHoldOrigin.current = { x: e.clientX, y: e.clientY };
+      if (optionsHoldTimer.current) clearTimeout(optionsHoldTimer.current);
+      optionsHoldTimer.current = setTimeout(() => {
+        optionsHoldTimer.current = null;
+        try { navigator.vibrate?.(10); } catch { /* no haptics */ }
+        // Hold = enter the page's EDIT MODE, edit bar and all (owner call
+        // — the options sheet opened here directly, and bottom bars could
+        // cut it off; in edit mode every widget's gear is right there).
+        onEnterEdit?.();
+      }, 600);
+    },
+    onPointerMove: (e) => {
+      if (!optionsHoldTimer.current || !optionsHoldOrigin.current) return;
+      const dx = e.clientX - optionsHoldOrigin.current.x;
+      const dy = e.clientY - optionsHoldOrigin.current.y;
+      if (dx * dx + dy * dy > 64) cancelOptionsHold();
+    },
+    onPointerUp: cancelOptionsHold,
+    onPointerCancel: cancelOptionsHold,
+    onPointerLeave: cancelOptionsHold,
+  };
+
+  // Edge-resize (hold an edge 0.15s, then drag; snaps to grid cols / 80px
+  // rows). Preview applies straight onto gridColumn/minHeight below.
+  const resize = useEdgeResize({
+    gridRef,
+    gridCols,
+    span: { cols: spanCols, rows: spanRows },
+    min: def.minSpan,
+    max: { ...(def.maxSpan || {}), rows: Math.round((def.maxSpan?.rows ?? 8) * (80 / rowPx)) },
+    rowPx,
+    onCommit: (next) => onSpan(widget.instanceId, next, { manual: true }),
+  });
+  const shownCols = resize.preview?.cols ?? spanCols;
+  const shownRows = resize.preview?.rows ?? spanRows;
+
+  // Free placement: hold, drag to a cell, drop. Only wired when the page is
+  // in free mode — flow pages keep dnd-kit's reordering.
+  // Empty rows above the topmost widget are not a layout choice — nothing
+  // can be placed there. Rendering them just pushes the whole board down
+  // behind a band of wallpaper. Stored positions are untouched; only the
+  // shared offset is dropped, so relative arrangement is preserved and
+  // dragging still writes real coordinates.
+  const rawCell = widget.pos || { x: 0, y: 0 };
+  const cell = { ...rawCell, y: Math.max(0, rawCell.y - (topRowOffset || 0)) };
+  const move = useFreeMove({
+    gridRef,
+    gridCols,
+    // The REAL row unit — the hook's default is 80, and on a finer grid
+    // that made vertical drops land at a fraction of the dragged distance
+    // (the "very clunky" report).
+    rowHeight: rowPx,
+    span: { cols: shownCols, rows: shownRows },
+    pos: cell,
+    enabled: free && editMode && !a11yStack,
+    onCommit: (next) => onPos?.(widget.instanceId, next),
+    onRemove: () => onRemove(widget.instanceId),
+  });
+  // Tell the board where this widget would land so it can draw the
+  // drop-target ghost (dragging blind was the other half of "clunky").
+  React.useEffect(() => {
+    if (!free) return undefined;
+    onDragTarget?.(widget.instanceId, move.drag ? { x: move.drag.target.x, y: move.drag.target.y, cols: shownCols, rows: shownRows, overTrash: move.drag.overTrash } : null);
+    return undefined;
+     
+  }, [move.drag?.target?.x, move.drag?.target?.y, move.drag?.overTrash, move.dragging]);
+
+  const look = widgetLookFor(widget.settings, userStyles, styleMode);
+  // Content alignment within the widget's box (owner request 2026-08-06):
+  // centered by default so a short widget never leaves all its blank space
+  // at the bottom; "safe" falls back to top when the content overflows so
+  // nothing becomes unscrollable.
+  const valign = widget.settings?.valign || "center";
+  const valignJustify = valign === "top" ? "flex-start" : valign === "bottom" ? "safe flex-end" : "safe center";
+  // Horizontal too — but this aligns the CONTENT INSIDE the widget, not
+  // the widget's box. Applying it to the outer wrapper's alignItems made
+  // the box itself shrink to its content and hug an edge, which reads as
+  // moving the widget — and the user already positions widgets freely on
+  // the grid. The box always fills its cell; the var below is consumed by
+  // Section's row stack (primitives.jsx).
+  const halign = widget.settings?.halign || "stretch";
+  const halignItems = halign === "left" ? "flex-start" : halign === "right" ? "flex-end" : halign === "center" ? "center" : "stretch";
+  const bgUrl = useResolvedAvatarUrl(look.bgImage || "");
+  const lookStyle = lookToStyle(look.bgImage ? { ...look, bgImage: bgUrl } : look);
+  // A widget's shadow is hoisted to the OUTER cell: the cell clips its
+  // content (overflow — the overlap fix), and a shadow drawn on the inner
+  // wrapper was cut off at the cell edge (the "glow gets clipped" report).
+  // The accent/radius vars ride along so glow colour and corner shape
+  // match; the inner copies are turned off so it doesn't paint twice.
+  const ownShadowCss = look.shadow != null && look.shadow !== ""
+    ? (SHADOW_PRESETS[look.shadow] ?? look.shadow)
+    : null;
+  const handSized = widget.settings?.autoFit === false;
+  // Flow view: everything is content-height unless the user explicitly
+  // hand-sized it — grown rows from the fit pass are a GRID concept and
+  // must not freeze a flowing card.
+  const fixedHeight = flowView
+    ? (handSized || !!resize.preview)
+    : (shownRows > 1 || handSized || !!resize.preview);
+
+  const style = collapsed
+    // Empty right now (view mode): keep it mounted at zero size so its
+    // content stays measurable and the cell un-collapses the moment the
+    // card has something to show — but out of the grid flow entirely.
+    ? { position: "absolute", left: 0, top: 0, width: 0, height: 0, overflow: "hidden", opacity: 0, pointerEvents: "none" }
+    : a11yStack
+    ? {}
+    : free
+      ? {
+          gridColumn: `${cell.x + 1} / span ${shownCols}`,
+          gridRow: `${cell.y + 1} / span ${shownRows}`,
+          transform: move.drag ? `translate(${move.drag.dx}px, ${move.drag.dy}px)` : undefined,
+          zIndex: move.dragging ? 45 : undefined,
+          opacity: move.dragging ? (move.drag?.overTrash ? 0.4 : 0.9) : undefined,
+          // The cell is the widget's boundary. Without this, anything taller
+          // than its rows paints straight over its neighbour — which is the
+          // overlap you see even when the coordinates are fine.
+          overflow: "hidden",
+          height: "100%",
+        }
+      : {
+        gridColumn: `span ${shownCols}`,
+        // Rows are a real height once they mean something: a widget you have
+        // sized yourself (or made taller than one row, or are resizing right
+        // now) gets exactly that height and scrolls inside it. Untouched
+        // one-row widgets still size to their content, so nothing that was
+        // never resized suddenly becomes a 80px letterbox.
+        height: fixedHeight ? shownRows * rowPx + (shownRows - 1) * 12 : undefined,
+        overflowY: fixedHeight ? "auto" : undefined,
+        minHeight: fixedHeight ? undefined : flowView ? 0 : 56,
+        // rectSortingStrategy assumes equal-size tiles and adds scale to its
+        // transforms — with mixed spans that stretches widgets mid-drag.
+        // Position-only transforms fix the "expands in weird ways" glitch.
+        transform: CSS.Transform.toString(transform ? { ...transform, scaleX: 1, scaleY: 1 } : transform),
+        transition,
+        zIndex: isDragging ? 40 : undefined,
+        opacity: isDragging ? 0.85 : undefined,
+      };
+  return (
+    <>
+    {/* Where it will land — drawn in the grid itself, so the preview is the
+        actual cell rather than an approximation of it. */}
+    {free && move.drag && (
+      <div aria-hidden="true" className="rounded-xl border-2 border-dashed pointer-events-none"
+        style={{
+          gridColumn: `${move.drag.target.x + 1} / span ${shownCols}`,
+          gridRow: `${move.drag.target.y + 1} / span ${shownRows}`,
+          borderColor: "color-mix(in srgb, var(--v2-accent, hsl(var(--primary))) 60%, transparent)",
+        }} />
+    )}
+    <div ref={setNodeRef} data-widget-id={widget.instanceId}
+      style={{
+        ...style,
+        ...(ownShadowCss && !collapsed ? {
+          boxShadow: ownShadowCss,
+          borderRadius: lookStyle["--v2-radius"] || "var(--v2-radius, 8px)",
+          ...(lookStyle["--v2-accent"] ? { "--v2-accent": lookStyle["--v2-accent"] } : {}),
+        } : {}),
+      }}
+      className="relative min-w-0">
+      {/* Look-copy selection: a full-tile button so the whole widget is the
+          target, not a fiddly corner checkbox. */}
+      {pickLookMode && !pickLookIsSource && (
+        <button
+          type="button"
+          onClick={onPickLookToggle}
+          aria-pressed={pickLookSelected}
+          aria-label={pickLookSelected ? "Deselect this widget" : "Select this widget"}
+          className="absolute inset-0 z-40 rounded-xl flex items-start justify-end p-1.5"
+          style={{
+            background: pickLookSelected ? "color-mix(in srgb, var(--v2-accent, hsl(var(--primary))) 22%, transparent)" : "transparent",
+            border: pickLookSelected
+              ? "2px solid var(--v2-accent, hsl(var(--primary)))"
+              : "2px dashed color-mix(in srgb, var(--v2-accent, hsl(var(--primary))) 45%, transparent)",
+          }}
+        >
+          {pickLookSelected && (
+            <span className="w-5 h-5 rounded-full flex items-center justify-center text-[0.625rem] font-bold"
+              style={{ background: "var(--v2-accent, hsl(var(--primary)))", color: "hsl(var(--primary-foreground))" }}>✓</span>
+          )}
+        </button>
+      )}
+      {pickLookMode && pickLookIsSource && (
+        <div className="absolute inset-0 z-40 rounded-xl pointer-events-none flex items-start justify-end p-1.5"
+          style={{ border: "2px solid var(--v2-accent, hsl(var(--primary)))" }}>
+          <span className="text-[0.5625rem] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-background/90">from</span>
+        </div>
+      )}
+
+      {editMode && (
+        // INSIDE the widget bounds — the old -top-2/-right-2 poked outside
+        // and got clipped by overflow/board edges (owner report).
+        <div className="absolute top-1 right-1 z-30 flex items-center gap-1">
+          {/* Widget options (rename / mode / style / icon) */}
+          <button
+            type="button"
+            aria-label={`Configure ${widget.settings?.label || defLabel}`}
+            onClick={() => onConfigure(widget.instanceId)}
+            className="w-6 h-6 rounded-full bg-background border border-border text-muted-foreground hover:text-foreground flex items-center justify-center shadow-sm"
+          >
+            <Settings2 className="w-3 h-3" />
+          </button>
+          {/* A11y-stack reorder buttons */}
+          {a11yStack && (
+            <span className="h-6 flex items-center rounded-full bg-background border border-border shadow-sm overflow-hidden">
+              <button type="button" aria-label="Move up" onClick={() => onMove(widget.instanceId, -1)}
+                className="px-1 h-full text-muted-foreground hover:text-foreground"><ArrowUp className="w-3 h-3" /></button>
+              <button type="button" aria-label="Move down" onClick={() => onMove(widget.instanceId, 1)}
+                className="px-1 h-full text-muted-foreground hover:text-foreground"><ArrowDown className="w-3 h-3" /></button>
+            </span>
+          )}
+        </div>
+      )}
+      <div
+        data-widget-content="1"
+        data-halign={halign}
+        {...(def.paintBox ? { "data-widget-box": "1" } : {})}
+        data-own-bw={lookStyle["--v2-own-border-w"] ? "1" : undefined}
+        {...(editMode && !a11yStack ? (free ? move.getMoveProps() : { ...attributes, ...listeners }) : {})}
+        {...(editMode && !a11yStack && onHoldSelect ? {
+          // Hold, then LET GO without moving = pick this widget for a
+          // multi-selection (owner spec). Holding and dragging is still
+          // the move gesture — dnd-kit arms at the same 300ms, so the
+          // two are told apart by whether the pointer travelled.
+          onPointerDownCapture: (e) => { holdSel.current = { t: Date.now(), x: e.clientX, y: e.clientY, moved: false }; },
+          onPointerMoveCapture: (e) => {
+            const h = holdSel.current;
+            if (!h) return;
+            if (Math.abs(e.clientX - h.x) > 6 || Math.abs(e.clientY - h.y) > 6) h.moved = true;
+          },
+          onPointerUpCapture: () => {
+            const h = holdSel.current;
+            holdSel.current = null;
+            if (!h || h.moved || isDragging) return;
+            if (Date.now() - h.t >= 300) onHoldSelect();
+          },
+          onPointerCancelCapture: () => { holdSel.current = null; },
+        } : {})}
+        onContextMenu={editMode ? (e) => e.preventDefault() : undefined}
+        className={[
+          // Style shell (homeStyles.js) — per-widget override beats the
+          // page style; "current"/"barebones" add no shell.
+          getStyleShell(
+            HOME_STYLE_IDS.includes(widget.settings?.style) ? widget.settings.style : styleMode
+          ),
+          editMode ? "relative select-none ring-1 ring-dashed ring-border/70 cursor-grab active:cursor-grabbing" : "",
+        ].join(" ").trim() || undefined}
+        style={{
+          ...lookStyle,
+          borderRadius: "var(--v2-radius, 8px)",
+          // Classic-registry widgets have no v2 Section to consume the box
+          // look — the wrapper paints it for them (def.paintBox). Neutral
+          // fallbacks keep the default look pixel-identical; only values
+          // the user actually sets appear.
+          ...(def.paintBox ? {
+            // Widget-OWN vars only (--v2-own-*, plus the per-side vars,
+            // which are widget-set by nature): the shared tokens are also
+            // set app-wide, and reading them here gave every classic card
+            // a default border + padding (owner report). Defaults are all
+            // zero/none — untouched widgets look exactly as before.
+            borderTopWidth: "var(--v2-border-w-t, var(--v2-own-outline-w, 0px))",
+            borderRightWidth: "var(--v2-border-w-r, var(--v2-own-outline-w, 0px))",
+            borderBottomWidth: "var(--v2-border-w-b, var(--v2-own-outline-w, 0px))",
+            borderLeftWidth: "var(--v2-border-w-l, var(--v2-own-outline-w, 0px))",
+            borderStyle: "var(--v2-border-style, solid)",
+            // The colour fallback is visible on purpose: widths default to
+            // 0px, so nothing paints until the user sets a width — and a
+            // width set WITHOUT a colour must still show something.
+            borderColor: "var(--v2-border-color, color-mix(in srgb, var(--color-muted) 60%, transparent))",
+            boxShadow: "var(--v2-own-shadow, none)",
+            backgroundColor: "var(--v2-own-bg, transparent)",
+            backdropFilter: "var(--v2-own-blur, none)",
+            WebkitBackdropFilter: "var(--v2-own-blur, none)",
+            padding: "var(--v2-pad-t, var(--v2-own-pad, 0px)) var(--v2-pad-r, var(--v2-own-pad, 0px)) var(--v2-pad-b, var(--v2-own-pad, 0px)) var(--v2-pad-l, var(--v2-own-pad, 0px))",
+            ...(lookStyle.backgroundImage ? {} : { backgroundImage: "var(--v2-own-gradient, none)" }),
+          } : {}),
+          // Shadow hoisted to the outer cell (it clips here) — silence
+          // every inner copy so it doesn't paint twice.
+          ...(ownShadowCss ? { "--v2-shadow": "none", "--v2-own-shadow": "none", boxShadow: "none" } : {}),
+          // The content fills the widget's box in both layout modes, so the
+          // border you see is the size you set; overflow scrolls inside it.
+          ...(free || fixedHeight
+            ? { height: "100%", overflowY: "auto" }
+            : null),
+          // Per-widget content alignment, consumed by Section's row stack
+          // (and by the flex wrapper below for content-sized widgets).
+          "--v2-widget-valign": valignJustify,
+          "--v2-widget-halign": halignItems,
+          // Horizontal "Left"/"Right" MIRRORS the layout, not just the
+          // justification — a left-handed (or RTL-language) user picking
+          // Right moves left-hugging elements to the right side and vice
+          // versa (owner spec). Flex rows, margin-auto pushes and text
+          // alignment all follow the direction; bidi keeps words readable.
+          //
+          // "Center" needs textAlign as well (v0.240.1). The halign var
+          // only reaches Section's `align-items`, and align-items cannot
+          // move a child that is already full width — which nearly every
+          // widget row is. So Center did nothing and looked identical to
+          // Fill. Left/Right never had this problem because `direction`
+          // re-bases text alignment for free. Setting textAlign here gives
+          // Center the same reach, and still lets a widget that opts into
+          // its own alignment (the heading/text widgets) override it.
+          ...(halign === "right" ? { direction: "rtl" }
+            : halign === "left" ? { direction: "ltr" }
+            : halign === "center" ? { textAlign: "center" }
+            : {}),
+          // Per-widget content size — index.css zooms the widget's body
+          // wrapper by this, so every widget scales, not just tagged ones.
+          "--v2-control-scale": (Math.min(200, Math.max(60, Number(widget.settings?.controlScale) || 100)) / 100),
+          ...(editMode ? {
+            // pan-y: vertical scrolling passes through; the 300ms hold-still
+            // sensors lift the widget instead. Callout/user-select suppression
+            // stops iOS's long-press magnifier from eating the hold.
+            touchAction: "pan-y",
+            WebkitTouchCallout: "none",
+            WebkitUserSelect: "none",
+            userSelect: "none",
+            minHeight: 56,
+            paddingTop: 18,
+          } : null),
+        }}
+      >
+        {editMode && (
+          <span className="absolute top-0.5 left-2 text-[0.625rem] uppercase tracking-wide text-muted-foreground/70 pointer-events-none truncate max-w-[70%]">
+            {(widget.settings?.label || defLabel).slice(0, 60)}
+          </span>
+        )}
+        {/* While editing, the widget's own controls are inert — a hold to
+            move should never also start an activity or save a status. */}
+        <div {...optionsHold}
+          data-widget-body=""
+          // A press on a hold-owning element (level rails, grid selection,
+          // day-span cells) is that element's gesture. Stop it on the way
+          // UP — after the element's own handler armed the hold — so the
+          // page-swipe drag above never sees it and can't cancel the rail.
+          // (Capture-phase stopping would have blocked the hold itself.)
+          onPointerDown={(e) => {
+            optionsHold.onPointerDown?.(e);
+            if (e.target.closest?.("[data-own-hold]")) e.stopPropagation();
+          }}
+          style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", justifyContent: valignJustify, ...(editMode ? { pointerEvents: "none" } : null) }}>
+        {(() => {
+          // Scoped rules: heading font/styles + body bold (lookExtraCss)
+          // and the user's own custom CSS, one style element per widget.
+          const sel = `[data-widget-id="${widget.instanceId}"]`;
+          const extra = lookExtraCss(look, sel);
+          const own = look.css && look.css !== OFF ? `${sel}{${look.css}}` : "";
+          const css = [extra, own].filter(Boolean).join("\n");
+          return css ? <style dangerouslySetInnerHTML={{ __html: css }} /> : null;
+        })()}
+        {def.render({
+          mode,
+          settings: widget.settings || {},
+          instanceId: widget.instanceId,
+          api,
+          updateSettings: (patch) => onSettings?.(widget.instanceId, patch),
+        })}
+        </div>
+      </div>
+
+      {/* Edge-resize handles — siblings of the drag wrapper so dnd-kit's
+          listeners never see their pointer events. Hold 0.15s, then drag. */}
+      {editMode && !a11yStack && !isDragging && (
+        <>
+          <div
+            {...resize.getHandleProps("x")}
+            aria-hidden="true"
+            className="absolute -right-1.5 inset-y-3 w-5 z-20 flex items-center justify-center cursor-ew-resize"
+          >
+            <span className="w-1 h-8 rounded-full bg-border" />
+          </div>
+          <div
+            {...resize.getHandleProps("y")}
+            aria-hidden="true"
+            className="absolute -bottom-1.5 inset-x-3 h-5 z-20 flex items-center justify-center cursor-ns-resize"
+          >
+            <span className="h-1 w-8 rounded-full bg-border" />
+          </div>
+          <div
+            {...resize.getHandleProps("xy")}
+            aria-hidden="true"
+            className="absolute -bottom-1.5 -right-1.5 w-6 h-6 z-20 flex items-center justify-center cursor-nwse-resize"
+          >
+            <span className="w-2 h-2 rounded-sm border-b-2 border-r-2 border-muted-foreground/70" />
+          </div>
+        </>
+      )}
+      {/* Live size badge while resizing */}
+      {resize.preview && (
+        <span className="absolute inset-0 z-30 grid place-items-center pointer-events-none">
+          <span className="px-2 py-1 rounded-lg bg-background/90 border border-border text-xs font-medium tabular-nums shadow-sm">
+            {shownCols} × {shownRows}
+          </span>
+        </span>
+      )}
+    </div>
+    </>
+  );
+}
+
+// `registry` and `settingsField` are injected so UI v2 can reuse this
+// canvas (grid, drag/resize, pages, edit mode) with its own redesigned
+// widget set and its own saved layout, without forking the mechanics.
+export default function ExperimentalDashboard({
+  settingsRow,
+  api,
+  registry = WIDGET_REGISTRY,
+  settingsField = "experimental_home",
+  // v2 injects this: leaving "back to classic" must flip ui_v2.enabled,
+  // not this layout blob's own enabled flag (which nothing reads in v2).
+  onExitToClassic = null,
+  // v2 injects this too: under v2 THE quick-action bar is the frame's
+  // command bar (ui_v2.commandKeys), so the edit toolbar's Bar row edits
+  // that — and this page stops drawing its own duplicate strip. Without
+  // it (classic experimental home) the legacy actionBar is still ours.
+  commandBar = null,
+  // v2 injects the home notice stack here so it renders INSIDE this
+  // root's stacking context — the wallpaper is fixed at -z-10 in the
+  // same context, so notices mounted here can never be painted over
+  // (the fate of every banner that lived outside the board).
+  notices = null,
+  // Classic-hosted board (the swipe-left widget board): swiping RIGHT
+  // past the FIRST page hands control back to the caller — the classic
+  // homescreen is the leftmost "page". Null under full v2 (no page to
+  // exit to).
+  onExitLeft = null,
+  // The mirror: the classic home rendered ON this canvas has the widget
+  // board as its RIGHT neighbour — swiping LEFT past the last page hands
+  // control forward instead of clamping.
+  onExitRight = null,
+  // Scopes the window events + pending sessionStorage keys this canvas
+  // answers to ("os-v2" → os-v2-edit-home / symphony_v2_*). The classic
+  // home canvas uses "os-classic" so "Edit widget board" can't put the
+  // HOME SCREEN into edit mode and vice versa.
+  eventPrefix = "os-v2",
+  // Classic-home rendering contract (owner): in VIEW mode the page reads
+  // as the classic column — every card at its natural content height,
+  // stacked in position order, expanding freely when its content does
+  // (What's-new, bulletins). Edit mode still uses the free grid, so
+  // arranging works exactly like the board. Display-only: stored
+  // positions and spans are untouched.
+  viewFlow = false,
+}) {
+  const qc = useQueryClient();
+  const t = useTerms();
+  const a11yStack = !!getAccessibilitySettings().a11yMode;
+  const [editMode, setEditMode] = useState(false);
+  // Tell the header ⚙ menu whether THIS home is being edited — it only
+  // offers "Reset home screen…" then (owner, 2026-10-01). Mirrored on
+  // window so a menu opened later reads the current state.
+  useEffect(() => {
+    try {
+      window.__osEditing = { ...(window.__osEditing || {}), [eventPrefix]: editMode };
+      window.dispatchEvent(new CustomEvent("os-home-edit-state", { detail: { scope: eventPrefix, editing: editMode } }));
+    } catch { /* SSR */ }
+    return () => {
+      try {
+        window.__osEditing = { ...(window.__osEditing || {}), [eventPrefix]: false };
+        window.dispatchEvent(new CustomEvent("os-home-edit-state", { detail: { scope: eventPrefix, editing: false } }));
+      } catch { /* SSR */ }
+    };
+  }, [editMode, eventPrefix]);
+  // Draft semantics for the edit bar: entering edit snapshots the board;
+  // "Discard changes" restores it, "Save & close" keeps the live writes.
+  const editSnapshot = useRef(null);
+  const [saveMenuOpen, setSaveMenuOpen] = useState(false);
+  const [exitMenuOpen, setExitMenuOpen] = useState(false);
+  const [packSheetOpen, setPackSheetOpen] = useState(false);
+  const [packSheetTab, setPackSheetTab] = useState("export");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  // Which tab the NEXT drawer open should land on (null = drawer default).
+  const [drawerTabRequest, setDrawerTabRequest] = useState(null);
+  // One AssetPickerModal serves wallpaper AND per-widget icon overrides:
+  // null | "wallpaper" | { icon: instanceId }
+  const [assetPickerFor, setAssetPickerFor] = useState(null);
+  const [configId, setConfigId] = useState(null);
+  // Which bar Display options was opened for (openBarsEditor) — that bar
+  // is shown and lifted over the edit toolbar while its section is open.
+  const [barFocus, setBarFocus] = useState(null);
+  const [draggingId, setDraggingId] = useState(null);
+  const [stylePickerOpen, setStylePickerOpen] = useState(false);
+  const gridRef = React.useRef(null);
+
+  // The apps button (top bar) and "Edit the home screen" (Display options)
+  // trigger the drawer / edit mode from outside this component.
+  React.useEffect(() => {
+    const key = (a) => `symphony_${eventPrefix === "os-classic" ? "classic" : "v2"}_${a}`;
+    const openApps = () => { setDrawerOpen(true); };
+    const editHome = () => { setEditMode(true); };
+    const homeSettings = (e) => { openHomeSettings(); setBarFocus(e?.detail?.barId || null); };
+    // Older parked "bar-options" requests (a gear tapped off-home before
+    // this update) land on the one bars editor.
+    const barOptions = () => { openBarsEditor("alters"); };
+    const packSheet = (e) => { openPackSheet(e?.detail?.tab); };
+    window.addEventListener(`${eventPrefix}-pack-sheet`, packSheet);
+    window.addEventListener(`${eventPrefix}-bar-options`, barOptions);
+    window.addEventListener(`${eventPrefix}-open-apps`, openApps);
+    window.addEventListener(`${eventPrefix}-edit-home`, editHome);
+    window.addEventListener(`${eventPrefix}-home-settings`, homeSettings);
+    try {
+      // A parked "open the app grid" request is only honoured if it was
+      // made SECONDS ago. It exists to survive one navigation home, which
+      // takes milliseconds. Without an expiry, any request that never got
+      // consumed (the canvas didn't mount, the board was showing) lingers
+      // and pops the drawer open on some later, unrelated trip home —
+      // which is what made the logo look like it opened the app list.
+      const parked = sessionStorage.getItem(key("open-apps"));
+      if (parked) {
+        sessionStorage.removeItem(key("open-apps"));
+        const at = Number(parked);
+        // Legacy "1" (no timestamp) is treated as stale, not honoured.
+        if (Number.isFinite(at) && at > 1 && Date.now() - at < 5000) setDrawerOpen(true);
+      }
+      if (sessionStorage.getItem(key("edit-home")) === "1") {
+        sessionStorage.removeItem(key("edit-home")); setEditMode(true);
+      }
+      if (sessionStorage.getItem(key("home-settings")) === "1") {
+        sessionStorage.removeItem(key("home-settings")); openHomeSettings();
+      }
+      if (sessionStorage.getItem(key("bar-options")) === "1") {
+        sessionStorage.removeItem(key("bar-options")); setTimeout(() => openBarsEditor("alters"), 0);
+      }
+      const packTab = sessionStorage.getItem(key("pack-sheet"));
+      if (packTab) {
+        sessionStorage.removeItem(key("pack-sheet")); openPackSheet(packTab);
+      }
+    } catch { /* storage off */ }
+    return () => {
+      window.removeEventListener(`${eventPrefix}-pack-sheet`, packSheet);
+      window.removeEventListener(`${eventPrefix}-bar-options`, barOptions);
+      window.removeEventListener(`${eventPrefix}-open-apps`, openApps);
+      window.removeEventListener(`${eventPrefix}-edit-home`, editHome);
+      window.removeEventListener(`${eventPrefix}-home-settings`, homeSettings);
+    };
+     
+  }, [eventPrefix]);
+
+  const home = useMemo(
+    () => resolveExperimentalHome(settingsRow?.[settingsField], registry),
+    [settingsRow, settingsField, registry]
+  );
+  // The user's own saved styles live beside the layout, on the settings row,
+  // so they travel with backups and device sync for free.
+  const userStyles = useMemo(() => resolveUserStyles(settingsRow?.ui_v2_styles), [settingsRow?.ui_v2_styles]);
+  const persistStyles = useCallback(async (next) => {
+    try {
+      if (settingsRow?.id) await base44.entities.SystemSettings.update(settingsRow.id, { ui_v2_styles: next });
+      qc.invalidateQueries({ queryKey: ["systemSettings"] });
+    } catch (e) { toast.error(e?.message || "Couldn't save the style"); }
+  }, [settingsRow?.id, qc]);
+  // Phase 2: multiple pages. activePageId is transient (each visit starts
+  // on the default page); the pages themselves live in experimental_home.
+  const [activePageId, setActivePageId] = useState(null);
+  const [audienceOpen, setAudienceOpen] = useState(false);
+  const [homeSettingsOpen, setHomeSettingsOpen] = useState(false);
+  // Peek + dock for the home settings drawer — shared preference with
+  // the Display options sheet (same DOCK_KEY) so both flip together.
+  const homePeekResize = usePeekHeight("symphony_options_peek_h", 85);
+  const [homeDock, setHomeDock] = useState(() => {
+    try { return localStorage.getItem(DOCK_KEY) === "top" ? "top" : "bottom"; } catch { return "bottom"; }
+  });
+  const flipHomeDock = () => {
+    const next = homeDock === "top" ? "bottom" : "top";
+    setHomeDock(next);
+    try { localStorage.setItem(DOCK_KEY, next); } catch { /* storage off */ }
+  };
+  useEffect(() => {
+    if (!homeSettingsOpen) return undefined;
+    document.documentElement.setAttribute("data-v2-peek", "1");
+    return () => document.documentElement.removeAttribute("data-v2-peek");
+  }, [homeSettingsOpen]);
+  // ONE edit surface at a time (owner): opening any of the widget/bar
+  // config sheet, Display options, the pack sheet or the widget drawer
+  // closes the others — stacked half-open menus were unusable.
+  const [homeSettingsNonce, setHomeSettingsNonce] = useState(0);
+  const configuringBar = homeSettingsOpen && barFocus === "alters";
+  const closeEditSurfaces = () => {
+    setConfigId(null); setHomeSettingsOpen(false); setPackSheetOpen(false); setBarFocus(null);
+    setDrawerOpen(false); setSaveMenuOpen(false); setExitMenuOpen(false);
+  };
+  const openConfig = (id) => { closeEditSurfaces(); setConfigId(id); };
+  const openHomeSettings = () => { closeEditSurfaces(); setHomeSettingsNonce((n) => n + 1); setHomeSettingsOpen(true); };
+  const openPackSheet = (tab = "export") => { closeEditSurfaces(); setPackSheetTab(tab === "import" ? "import" : "export"); setPackSheetOpen(true); };
+  const openWidgetDrawer = (tab = null) => { closeEditSurfaces(); setDrawerTabRequest(tab); setDrawerOpen(true); };
+  // Publish the edit bar's height so the chrome can lift previewed bars
+  // (and open sheets can pad) clear of it. 0/absent outside edit mode.
+  const editBarRef = React.useRef(null);
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!editMode) { root.style.removeProperty("--home-edit-bar-h"); return undefined; }
+    const el = editBarRef.current;
+    const publish = () => {
+      const box = editBarRef.current?.getBoundingClientRect();
+      if (box) root.style.setProperty("--home-edit-bar-h", `${Math.ceil(box.height)}px`);
+    };
+    publish();
+    if (!el || typeof ResizeObserver === "undefined") return () => root.style.removeProperty("--home-edit-bar-h");
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => { ro.disconnect(); root.style.removeProperty("--home-edit-bar-h"); };
+  }, [editMode]);
+  const [styleQuery, setStyleQuery] = useState("");
+  const [styleNotes, setStyleNotes] = useState(null);   // style id whose coverage is shown
+  const [swipeDir, setSwipeDir] = useState(0); // -1 back, 1 forward — drives the slide-in
+  // Pages can be addressed to specific alters. Outside edit mode the board
+  // only navigates the ones the current fronters can see — but if that
+  // would leave NOTHING, everyone sees everything. Being locked out of your
+  // own home screen is the one outcome this must never produce.
+  const frontingIds = useFrontingIds();
+  // House ordering for the page-audience list (fronters first, the user's
+  // own arrangement, one-tap sort switch).
+  const audienceSorter = useAlterSorter("pageAudience_sort", { frontingIds });
+  const visiblePages = useMemo(() => {
+    if (editMode) return home.pages;
+    const allowed = home.pages.filter((p) => {
+      if (!p.visibleTo?.length) return true;
+      const matches = p.visibleTo.some((id) => frontingIds.has(id));
+      return p.visibleMode === "except" ? !matches : matches;
+    });
+    return allowed.length ? allowed : home.pages;
+  }, [home.pages, editMode, frontingIds]);
+  const page =
+    visiblePages.find((p) => p.id === activePageId) ||
+    visiblePages.find((p) => p.id === home.defaultPageId) ||
+    visiblePages[0];
+  const pageIdx = visiblePages.findIndex((p) => p.id === page.id);
+  // Free pages lock to the columns they were arranged on (see useGridCols).
+  const gridCols = useGridCols(home.grid?.phoneCols || 4, page.layoutMode === "free");
+  const rowPx = [80, 60, 40].includes(home.grid?.rowPx) ? home.grid.rowPx : 80;
+  // Grid density presets. Changing one RESCALES every widget on every page
+  // proportionally (spans and free positions) so the board keeps its shape
+  // — only the size STEPS get finer or coarser.
+  // The user picks WIDTH only; the row unit follows so cells stay squarish
+  // (finer columns ⇒ finer rows, no separate number to reason about).
+  const DENSITIES = [
+    { cols: 4, rowPx: 80, label: "4 across" }, { cols: 5, rowPx: 80, label: "5 across" },
+    { cols: 6, rowPx: 60, label: "6 across" }, { cols: 8, rowPx: 40, label: "8 across" },
+  ];
+  const setDensity = (d) => {
+    const oldCols = home.grid?.phoneCols || 4, oldRow = rowPx;
+    const fx = d.cols / oldCols, fy = oldRow / d.rowPx;
+    const scaleW = (w) => ({
+      ...w,
+      span: { cols: Math.max(1, Math.round((w.span?.cols || 1) * fx)), rows: Math.max(1, Math.round((w.span?.rows || 1) * fy)) },
+      pos: w.pos ? { x: Math.round((w.pos.x || 0) * fx), y: Math.round((w.pos.y || 0) * fy) } : w.pos,
+    });
+    persist({ ...home, grid: { phoneCols: d.cols, rowPx: d.rowPx }, pages: home.pages.map((p) => ({ ...p, widgets: p.widgets.map(scaleW) })) });
+  };
+
+  const goToPage = useCallback((idx) => {
+    if (idx < 0 || idx >= visiblePages.length || visiblePages[idx].id === page.id) return;
+    setSwipeDir(idx > pageIdx ? 1 : -1);
+    setActivePageId(visiblePages[idx].id);
+  }, [visiblePages, page.id, pageIdx]);
+
+  // Every write keeps the version it replaced, so anything destructive can
+  // be handed back. Losing a home screen you spent time arranging is not a
+  // thing the user should have to rebuild from memory.
+  const undoRef = useRef(null);
+  // The board as this canvas last WROTE it. A write lands asynchronously
+  // (an encrypted save on a phone takes a while) and `home` only catches
+  // up after the refetch — so a second change made before then was built
+  // on the OLD board and quietly put the first one back: a song picked
+  // right after a rename, the display name flushed as the options sheet
+  // was left by a bar button or the back button, fast typing in the song
+  // title (user report: "it reverts back to the old setting"). Writes now
+  // chain on the newest board, and the settings cache is updated at once
+  // so the screen and the open options sheet follow straight away. While
+  // writes are in flight a render's `home` can be older than what was
+  // written, so it is only adopted once they have all settled.
+  const boardRef = useRef({ board: home, pending: 0 });
+  if (boardRef.current.pending === 0) boardRef.current.board = home;
+  const persist = useCallback(async (nextHome, opts = {}) => {
+    const previous = boardRef.current.board;
+    // First real edit claims the board — the _seeded marker only belongs
+    // to an untouched starter layout (see seedV2Home).
+    if (nextHome && nextHome._seeded) { nextHome = { ...nextHome }; delete nextHome._seeded; }
+    // Boards sync between devices and merge page by page: a person's edit
+    // stamps the pages it changed and records deleted pages. The board's
+    // own auto-fit (opts.machine) doesn't — re-fitting on a different
+    // screen must never make a page look "newer" than a real edit.
+    if (!opts.machine) nextHome = stampBoardChanges(previous, nextHome);
+    const written = nextHome;
+    boardRef.current.board = written;
+    boardRef.current.pending += 1;
+    if (settingsRow?.id) {
+      // A refetch still in flight would land the pre-write row on top.
+      // Awaited: a cancel reverts the query's state when it settles, which
+      // would wipe an optimistic value set before it.
+      await qc.cancelQueries({ queryKey: ["systemSettings"] });
+      qc.setQueryData(["systemSettings"], (rows) => (Array.isArray(rows)
+        ? rows.map((r) => (r?.id === settingsRow.id ? { ...r, [settingsField]: written } : r))
+        : rows));
+    }
+    try {
+      if (settingsRow?.id) {
+        await base44.entities.SystemSettings.update(settingsRow.id, { [settingsField]: nextHome });
+      } else {
+        await base44.entities.SystemSettings.create({ [settingsField]: nextHome });
+      }
+      if (opts.undoLabel) {
+        undoRef.current = previous;
+        toast(opts.undoLabel, {
+          duration: 12000,
+          action: {
+            label: "Undo",
+            onClick: async () => {
+              const raw = undoRef.current;
+              if (!raw) return;
+              undoRef.current = null;
+              // An undo is an edit too: re-stamp, so a page brought back
+              // beats the other device's record of deleting it.
+              const snapshot = stampBoardChanges(nextHome, raw);
+              try {
+                if (settingsRow?.id) {
+                  await base44.entities.SystemSettings.update(settingsRow.id, { [settingsField]: snapshot });
+                } else {
+                  await base44.entities.SystemSettings.create({ [settingsField]: snapshot });
+                }
+                qc.invalidateQueries({ queryKey: ["systemSettings"] });
+                if (opts.restorePageId) setActivePageId(opts.restorePageId);
+                toast.success("Restored");
+              } catch (e) { toast.error(e?.message || "Couldn't undo"); }
+            },
+          },
+        });
+      }
+    } catch (e) {
+      toast.error(e?.message || "Couldn't save the homescreen");
+    } finally {
+      boardRef.current.pending = Math.max(0, boardRef.current.pending - 1);
+      // Re-read the truth once the last queued write has landed (or failed
+      // — a failed write must not leave the optimistic board on screen).
+      if (boardRef.current.pending === 0) qc.invalidateQueries({ queryKey: ["systemSettings"] });
+    }
+  }, [settingsRow?.id, qc, settingsField]);
+
+  // Built on the newest board (see boardRef), never the render's copy.
+  const updatePageWidgets = useCallback((mutate, opts = {}) => {
+    const board = boardRef.current.board;
+    const next = {
+      ...board,
+      pages: board.pages.map((p) => (p.id === page.id ? { ...p, widgets: mutate(p.widgets) } : p)),
+    };
+    persist(next, opts);
+  }, [page.id, persist]);
+
+  // ── Edit operations ────────────────────────────────────────────
+  const handleRemove = (instanceId) => {
+    const gone = widgets.find((w) => w.instanceId === instanceId);
+    const label = gone ? widgetLabel(registry[gone.widgetId], t) : "Widget";
+    persist({
+      ...home,
+      pages: home.pages.map((p) => (p.id !== page.id ? p : {
+        ...p, widgets: p.widgets.filter((w) => w.instanceId !== instanceId),
+      })),
+    }, { undoLabel: `Removed ${label}` });
+  };
+  const pageIsFree = page.layoutMode === "free";
+  useEffect(() => {
+    if (editMode && !editSnapshot.current) {
+      try { editSnapshot.current = JSON.parse(JSON.stringify(home)); } catch { editSnapshot.current = null; }
+    }
+    if (!editMode) { editSnapshot.current = null; setSaveMenuOpen(false); setExitMenuOpen(false); }
+     
+  }, [editMode]);
+  const [barsPreview, setBarsPreview] = useState(false);
+  useEffect(() => {
+    // The chrome (V2Frame) collapses the quick-action + pinned bars while
+    // the board is being edited; the eye chip previews them back in.
+    document.documentElement.toggleAttribute("data-home-edit", editMode);
+    // Editing the pinned bar's own options previews the bars too — you
+    // can't tune a bar you can't see (owner, 2026-10-01: "I cannot see the
+    // pinned alters bar even when I position the menu to the opposite edge").
+    document.documentElement.toggleAttribute("data-home-edit-preview", editMode && (barsPreview || configuringBar));
+    try { window.dispatchEvent(new Event("symphony-home-edit-changed")); } catch { /* SSR */ }
+    if (!editMode) setBarsPreview(false);
+  }, [editMode, barsPreview, configuringBar]);
+  // Leaving edit mode closes every open edit surface too (widget config,
+  // Display options, pack sheet, drawer, menus). Their edits are written
+  // live, so closing them IS saving them; leaving them open after "Save &
+  // close" looked like the save hadn't happened (owner report).
+  const exitSave = () => { editSnapshot.current = null; closeEditSurfaces(); setEditMode(false); };
+  const exitDiscard = async () => {
+    const snap = editSnapshot.current;
+    editSnapshot.current = null;
+    closeEditSurfaces();
+    setEditMode(false);
+    if (snap) { try { await persist(snap); } catch { /* board keeps live state */ } }
+  };
+  const handleSpan = (instanceId, patch, opts = {}) =>
+    updatePageWidgets((ws) => {
+      const next = ws.map((w) => (w.instanceId === instanceId
+        ? {
+            ...w,
+            span: { ...w.span, ...patch },
+            // Size it by hand and it stays that size; content scrolls inside.
+            settings: opts.manual ? { ...w.settings, autoFit: false } : w.settings,
+          }
+        : w));
+      return pageIsFree ? resolveOverlaps(next, gridCols, instanceId) : next;
+    });
+  const handleMode = (instanceId, mode) =>
+    updatePageWidgets((ws) => ws.map((w) => (w.instanceId === instanceId ? { ...w, mode } : w)));
+  // MULTI-SELECT (owner request): set several widgets at once — give the
+  // whole page a preset, then adjust just a few for alignment or
+  // background. Press-and-hold is already the drag-to-move gesture in
+  // edit mode, so selection is its own mode off the edit bar rather than
+  // a second meaning for the same press.
+  const [multiMode, setMultiMode] = useState(false);
+  const [multiIds, setMultiIds] = useState([]);
+  const multiEditing = multiMode && multiIds.length > 0 && configId && multiIds.includes(configId);
+  const exitMulti = () => { setMultiMode(false); setMultiIds([]); };
+  const toggleMulti = (id) => setMultiIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const selectAllOnPage = () => setMultiIds(page.widgets.map((w) => w.instanceId));
+
+  const handleSettings = (instanceId, patch) =>
+    updatePageWidgets((ws) =>
+      ws.map((w) => {
+        // While editing a selection, every change lands on ALL of them —
+        // the point of selecting several is to stop repeating yourself.
+        const hit = multiEditing ? multiIds.includes(w.instanceId) : w.instanceId === instanceId;
+        return hit ? { ...w, settings: { ...w.settings, ...patch } } : w;
+      })
+    );
+  // Copying a look = the LOOK_KEYS only (colours/shape/spacing/font/css) —
+  // never a widget's own options, its name or its size, which are not
+  // "how it looks".
+  const [pickLookFrom, setPickLookFrom] = useState(null);   // instanceId
+  const [pickLookIds, setPickLookIds] = useState([]);       // chosen targets
+  const applyLookTo = (sourceId, targetIds) => {
+    const source = home.pages.flatMap((p) => p.widgets).find((w) => w.instanceId === sourceId);
+    if (!source) return;
+    // The style REFERENCE has to travel with the explicit keys. Most of a
+    // widget's colour usually comes from the style it points at, so copying
+    // only its own keys moved the shape and spacing across and left the
+    // colours behind — which is exactly what it looked like.
+    const look = { style: source.settings?.style || "", ...pickLook(source.settings || {}) };
+    const ids = new Set(targetIds);
+    persist({
+      ...home,
+      pages: home.pages.map((p) => ({
+        ...p,
+        widgets: p.widgets.map((w) => (ids.has(w.instanceId) && w.instanceId !== sourceId
+          ? { ...w, settings: { ...w.settings, ...look } }
+          : w)),
+      })),
+    });
+    toast.success(`Look applied to ${ids.size} widget${ids.size === 1 ? "" : "s"}`);
+  };
+  const handleApplyLook = (scope) => {
+    if (scope === "pick") {
+      setPickLookFrom(configId);
+      setPickLookIds([]);
+      setConfigId(null);
+      return;
+    }
+    const targets = (scope === "page" ? [page] : home.pages)
+      .flatMap((p) => p.widgets)
+      .map((w) => w.instanceId)
+      .filter((id) => id !== configId);
+    applyLookTo(configId, targets);
+    setConfigId(null);
+  };
+
+  // Put a widget back to how it ships: registry span + mode, and every
+  // per-widget setting (label, look, alignment, content size, its own
+  // options) cleared. Position stays — this resets the widget, not where
+  // the user put it.
+  const handleResetWidget = (instanceId) =>
+    updatePageWidgets((ws) =>
+      ws.map((w) => {
+        if (w.instanceId !== instanceId) return w;
+        const def = registry[w.widgetId];
+        if (!def) return w;
+        return {
+          ...w,
+          span: { cols: def.defaultSpan?.cols ?? 4, rows: def.defaultSpan?.rows ?? 1 },
+          mode: effectiveMode(undefined, def.supportsModes),
+          settings: {},
+        };
+      })
+    );
+  // Address this page to specific alters (empty = everyone sees it).
+  const setPageShowAs = (v) =>
+    persist({ ...home, pages: home.pages.map((p) => (p.id === page.id ? { ...p, showAs: v } : p)) });
+  const setPageAudience = (ids) =>
+    persist({ ...home, pages: home.pages.map((p) => (p.id === page.id ? { ...p, visibleTo: ids } : p)) });
+  const handleMove = (instanceId, dir) =>
+    updatePageWidgets((ws) => {
+      const i = ws.findIndex((w) => w.instanceId === instanceId);
+      const j = i + dir;
+      if (i === -1 || j < 0 || j >= ws.length) return ws;
+      return arrayMove(ws, i, j);
+    });
+  const handleAddWidget = (widgetId, settings = {}, { edit = true, mode = "normal" } = {}) => {
+    const def = registry[widgetId];
+    if (!def) return;
+    // Duplicates are allowed everywhere (v0.231.0, owner ask): two copies
+    // of the same widget with different options is a real use case. The
+    // drawer's "on this page" tag is informational only.
+    updatePageWidgets((ws) => {
+      const added = { instanceId: newInstanceId(), widgetId, span: { ...(def.defaultSpan || { cols: 4, rows: 1 }) }, mode: effectiveMode(mode, def.supportsModes), settings };
+      if (!pageIsFree) return [...ws, added];
+      // Free page: land in the next EMPTY spot (first gap that fits, else
+      // below everything) — never interjected into the arrangement.
+      added.pos = findFreeCell(ws, gridCols, added.span);
+      return [...ws, added];
+    });
+    toast.success(`${widgetLabel(def, t)} added`);
+    if (edit) {
+      setDrawerOpen(false);
+      setEditMode(true);
+    }
+    // Pin-while-editing keeps the drawer open so several apps can be pinned
+    // in a row.
+  };
+
+  // Drop from the drawer's hold-and-drag: land the widget AT the cell
+  // under the finger (free pages in edit mode — the only place the
+  // widgets tab opens from). A drop outside the grid falls back to the
+  // ordinary append.
+  const handleDropWidget = (widgetId, point) => {
+    const def = registry[widgetId];
+    if (!def) return;
+    const rect = gridRef.current?.getBoundingClientRect();
+    const inside = rect && point
+      && point.x >= rect.left && point.x <= rect.right
+      && point.y >= rect.top && point.y <= rect.bottom;
+    if (!inside || !pageIsFree) { handleAddWidget(widgetId); return; }
+    const gap = home.styleMode === "barebones" ? 6 : 12;
+    const cw = (rect.width - (gridCols - 1) * gap) / gridCols;
+    const col = Math.floor((point.x - rect.left) / (cw + gap));
+    const row = Math.floor((point.y - rect.top) / (rowPx + gap));
+    const span = { ...(def.defaultSpan || { cols: 4, rows: 1 }) };
+    span.cols = Math.min(span.cols, gridCols);
+    const added = {
+      instanceId: newInstanceId(), widgetId, span,
+      mode: effectiveMode("normal", def.supportsModes), settings: {},
+      pos: { x: Math.max(0, Math.min(gridCols - span.cols, col)), y: Math.max(0, row) },
+    };
+    updatePageWidgets((ws) => resolveOverlaps([...ws, added], gridCols, added.instanceId));
+    toast.success(`${widgetLabel(def, t)} added`);
+    setDrawerOpen(false);
+    setEditMode(true);
+  };
+
+  const setWallpaper = (url) => persist({ ...home, wallpaper: { url: url || "" } });
+  // Route the shared AssetPickerModal's selection to whatever asked for it.
+  const handleAssetSelected = (url) => {
+    if (assetPickerFor === "wallpaper") setWallpaper(url);
+    else if (assetPickerFor?.icon) handleSettings(assetPickerFor.icon, { iconUrl: url || "" });
+    else if (assetPickerFor?.bg) handleSettings(assetPickerFor.bg, { bgImage: url || "" });
+    setAssetPickerFor(null);
+  };
+
+  // ── Page operations (Phase 2) ──────────────────────────────────
+  const handleAddPage = () => {
+    const id = newPageId();
+    persist({ ...home, pages: [...home.pages, { id, label: `Page ${home.pages.length + 1}`, layoutMode: "free", widgets: [] }] });
+    setSwipeDir(1);
+    setActivePageId(id);
+  };
+  const handleRenamePage = (label) => {
+    persist({ ...home, pages: home.pages.map((p) => (p.id === page.id ? { ...p, label } : p)) });
+  };
+  const handleSetDefaultPage = () => persist({ ...home, defaultPageId: page.id });
+  // "Overwrite as homescreen" (classic-hosted boards only, i.e. when
+  // onExitLeft exists): the app opens on THIS page and the Home button
+  // lands here instead of the classic home. Off = the classic home
+  // screen is home again. Implemented as ui_v2.homeDefault="board" +
+  // this page as the board's default page.
+  const homeOverrideOn = settingsRow?.ui_v2?.homeDefault === "board" && home.defaultPageId === page.id;
+  const toggleHomeOverride = async () => {
+    try {
+      if (!homeOverrideOn && home.defaultPageId !== page.id) {
+        await persist({ ...home, defaultPageId: page.id });
+      }
+      const nextUi = { ...(settingsRow?.ui_v2 || {}), homeDefault: homeOverrideOn ? "classic" : "board" };
+      if (settingsRow?.id) await base44.entities.SystemSettings.update(settingsRow.id, { ui_v2: nextUi });
+      else await base44.entities.SystemSettings.create({ ui_v2: nextUi });
+      qc.invalidateQueries({ queryKey: ["systemSettings"] });
+      toast.success(homeOverrideOn
+        ? "The classic home screen is home again"
+        : "This page is your home screen now — Home comes here");
+    } catch (e) {
+      toast.error(e?.message || "Couldn't switch the home screen");
+    }
+  };
+  const handleDeletePage = () => {
+    if (home.pages.length <= 1) return;
+    const remaining = home.pages.filter((p) => p.id !== page.id);
+    // Deleting a page deletes its widgets WITH it (owner: "I'm tryna
+    // delete em all!") — they used to hop to the next page, which made
+    // clearing a board impossible. The 12s Undo toast restores the whole
+    // board, widgets included, so nothing is lost without recourse.
+    const deletedId = page.id;
+    const deletedName = page.label || "Page";
+    const n = page.widgets.length;
+    persist({
+      ...home,
+      pages: remaining,
+      defaultPageId: home.defaultPageId === page.id ? remaining[0].id : home.defaultPageId,
+    }, { undoLabel: n ? `Deleted "${deletedName}" and its ${n} widget${n === 1 ? "" : "s"}` : `Deleted "${deletedName}"`, restorePageId: deletedId });
+    setSwipeDir(-1);
+    setActivePageId(remaining[0].id);
+  };
+  const handlePos = (instanceId, pos) =>
+    updatePageWidgets((ws) =>
+      resolveOverlaps(
+        ws.map((w) => (w.instanceId === instanceId ? { ...w, pos } : w)),
+        gridCols,
+        instanceId
+      )
+    );
+
+  // Resizing a widget on a free page pushes its neighbours down and leaves
+  // holes behind; dragging each one back up is the hassle. Closing the gaps
+  // is pure gravity — each widget falls straight up into the empty space
+  // above it, keeping its column, its size and its place in the order. It
+  // used to run packPositions, which re-flows the page from scratch and so
+  // also moved widgets sideways and resized them to their measured height.
+  const collapseGaps = () => {
+    persist({
+      ...home,
+      pages: home.pages.map((p) => (p.id !== page.id ? p : {
+        ...p, widgets: compactVertically(p.widgets, gridCols),
+      })),
+    });
+    toast.success("Gaps closed up");
+  };
+  const handleBackToClassic = () => (onExitToClassic ? onExitToClassic() : persist({ ...home, enabled: false }));
+  // Hold-still-to-lift (owner spec): 0.3s stationary hold starts a move;
+  // tolerance cancels activation if the pointer moves during the delay, so
+  // a scroll gesture can never lift a widget. MouseSensor + TouchSensor
+  // (NOT PointerSensor — mixing it with TouchSensor double-handles a touch).
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { delay: 300, tolerance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 300, tolerance: 6 } })
+  );
+  const handleDragEnd = ({ active, over }) => {
+    setDraggingId(null);
+    if (over?.id === TRASH_ID) { handleRemove(active.id); return; }
+    if (!over || active.id === over.id) return;
+    updatePageWidgets((ws) => {
+      const from = ws.findIndex((w) => w.instanceId === active.id);
+      const to = ws.findIndex((w) => w.instanceId === over.id);
+      if (from === -1 || to === -1) return ws;
+      return arrayMove(ws, from, to);
+    });
+  };
+
+  // A wallpaper FOLDER rotates through its images (one pick per page
+  // load, same engine the alter avatar/background pools use); a single
+  // picked image is the fallback when no folder is set.
+  const wallpaperPick = useRotatingImageUrl({
+    folder: home.wallpaper?.folder || "",
+    mode: home.wallpaper?.mode || "random",
+    scope: "wallpaper",
+    fallbackUrl: home.wallpaper?.url || "",
+  });
+  const wallpaperUrl = useResolvedAvatarUrl(wallpaperPick);
+  // The unified edit popup's page background (flat / gradient / image +
+  // page song). When set it replaces the legacy wallpaper; "none" keeps
+  // the wallpaper block below rendering exactly as before.
+  const pageBackgroundRaw = useMemo(() => resolveBackground(home.background), [home.background]);
+  // A background image with a FOLDER rotates like the wallpaper did —
+  // one pick per app open, resolved here because the renderer is pure.
+  const bgImagePick = useRotatingImageUrl({
+    folder: pageBackgroundRaw.image.folder || "",
+    mode: pageBackgroundRaw.image.mode || "random",
+    scope: "wallpaper",
+    fallbackUrl: pageBackgroundRaw.image.url || "",
+  });
+  const pageBackground = useMemo(() => (
+    pageBackgroundRaw.type === "image" && pageBackgroundRaw.image.folder
+      ? { ...pageBackgroundRaw, image: { ...pageBackgroundRaw.image, url: bgImagePick || pageBackgroundRaw.image.url } }
+      : pageBackgroundRaw
+  ), [pageBackgroundRaw, bgImagePick]);
+  // The unified popup's Presets section lists board styles; its "all
+  // styles" button re-opens the full picker below (search, swatches,
+  // use-as-base) via this event, since the picker needs board internals
+  // (persist/page) the popup doesn't have.
+  useEffect(() => {
+    const open = () => setStylePickerOpen(true);
+    window.addEventListener("os-open-board-style-picker", open);
+    return () => window.removeEventListener("os-open-board-style-picker", open);
+  }, []);
+
+  // Under v2 the frame's command bar IS the quick-action bar; drawing
+  // this one too gave the user two bars, only one of which the Bar
+  // toggles moved.
+  const barIds = (!commandBar && home.actionBar.enabled) ? home.actionBar.buttonIds : [];
+  // PinnedAltersGallery renders null with no pins — hide the bar chrome too
+  // so an empty strip doesn't sit there (but keep it visible in edit mode so
+  // the toggle has visible feedback).
+  // Enabled = shown. It used to also require pinned alters, which made
+  // the popup's Show toggle appear broken on a system with none pinned —
+  // the gallery's own empty state explains what to do instead.
+  // The pinned bar is this device's chrome, not the board's (barsModel) —
+  // the board only reads it and draws its own copy when there's no chrome.
+  const pinnedBar = readPinnedBar(settingsRow);
+  const writePinnedBar = useCallback(async (patch) => {
+    if (!settingsRow?.id) return;
+    try {
+      await base44.entities.SystemSettings.update(settingsRow.id, pinnedBarPatch(settingsRow, patch));
+      qc.invalidateQueries({ queryKey: ["systemSettings"] });
+    } catch (e) { toast.error(e?.message || "Couldn't save"); }
+  }, [settingsRow, qc]);
+  const altersBarOn = pinnedBar.enabled;
+  const altersCollapsed = pinnedBar.collapsed;
+  const altersValign = pinnedBarLook(settingsRow).valign || "center";
+  const toggleAltersCollapsed = () => writePinnedBar({ collapsed: !altersCollapsed });
+  // The bottom chrome (V2Frame) hosts the bar on EVERY page whenever it
+  // renders at all — the user's spec: it behaves like the quick-actions
+  // bar. The board only draws its own copy when there is no chrome.
+  const navBars = { actions: true, tabs: true, ...(settingsRow?.ui_v2?.bars || {}) };
+  const altersHostedInNav = !!commandBar && (navBars.actions !== false || navBars.tabs !== false);
+  // Holding the Set Fronters key folds the pinned-alters bar in or out, so
+  // it can live collapsed inside the quick-action row (owner's idea).
+  useEffect(() => {
+    const onToggle = (e) => {
+      // detail.open states a direction (a drag); absent = plain toggle (a tap).
+      const want = e?.detail?.open;
+      const collapsed = want === true ? false
+        : want === false ? true
+        : (pinnedBar.enabled ? !pinnedBar.collapsed : false);
+      writePinnedBar({ enabled: true, collapsed });
+    };
+    // When the bottom chrome hosts the bar it also answers this event
+    // (on every page) — don't double-toggle from here.
+    if (altersHostedInNav) return undefined;
+    window.addEventListener("os-v2-toggle-alters-bar", onToggle);
+    return () => window.removeEventListener("os-v2-toggle-alters-bar", onToggle);
+  }, [pinnedBar.enabled, pinnedBar.collapsed, writePinnedBar, altersHostedInNav]);
+  const altersTop = altersBarOn && pinnedBar.position === "top";
+  // With the quick-action bar OFF, the pinned bar moves INTO the bottom
+  // chrome (V2BottomChrome renders it there — the user's spec), so the
+  // board must not also draw its own floating copy.
+  const altersBottom = altersBarOn && pinnedBar.position === "bottom" && !altersHostedInNav;
+  const widgets = page.widgets.filter((w) => registry[w.widgetId]);
+  const freeMode = page.layoutMode === "free" && !a11yStack;
+  const flowView = viewFlow && freeMode && !editMode;
+
+  // One pass, per page and width: give every widget the rows its content
+  // actually needs, then untangle. Done centrally and written once —
+  // per-widget writes raced each other and walked the layout down the page.
+  // Runs again only when the page or the column count changes.
+  const fitted = React.useRef("");
+  React.useEffect(() => {
+    if (!freeMode || !settingsRow?.id || !gridRef.current) return undefined;
+    // The stamp carries the layout fingerprint, not just the page id — a
+    // page-id-only stamp meant an external rewrite of the SAME page (the
+    // classic-home heal reseating everything at 1 row) never re-fitted,
+    // leaving every card clipped. The pass's own write changes the
+    // fingerprint too, which triggers exactly one confirming re-run that
+    // measures, finds nothing to grow, and settles.
+    const stamp = `${page.id}:${gridCols}:${page.widgets.map((w) => `${w.instanceId}${w.span?.rows}|${w.pos?.x},${w.pos?.y}`).join(";")}`;
+    if (fitted.current === stamp) return undefined;
+    const id = setTimeout(() => {
+      const grid = gridRef.current;
+      if (!grid) return;
+      const needed = {};
+      for (const node of grid.querySelectorAll("[data-widget-id]")) {
+        const content = node.querySelector("[data-widget-content]");
+        if (!content) continue;
+        needed[node.dataset.widgetId] = Math.max(1, Math.ceil((content.scrollHeight + 12) / (rowPx + 12)));
+      }
+      const grown = page.widgets.map((w) => {
+        if (w.settings?.autoFit === false) return w;
+        const def = registry[w.widgetId];
+        const want = Math.min(Math.round((def?.maxSpan?.rows ?? 8) * (80 / rowPx)), needed[w.instanceId] || 1);
+        return want > (w.span?.rows || 1) ? { ...w, span: { ...w.span, rows: want } } : w;
+      });
+      const changed = grown.some((w, i) => w.span?.rows !== page.widgets[i].span?.rows);
+      if (!changed && !hasOverlaps(page.widgets, gridCols)) { fitted.current = stamp; return; }
+      fitted.current = stamp;
+      markMachineWrite();
+      // Apply only the new heights onto the NEWEST widgets — `grown` is this
+      // render's copy, and writing it whole would undo an options change
+      // still on its way to disk.
+      const rowsById = Object.fromEntries(grown.map((w) => [w.instanceId, w.span?.rows]));
+      updatePageWidgets((ws) => resolveOverlaps(ws.map((w) => {
+        const rows = rowsById[w.instanceId];
+        return rows && rows > (w.span?.rows || 1) ? { ...w, span: { ...w.span, rows } } : w;
+      }), gridCols), { machine: true });
+    }, 120);
+    return () => clearTimeout(id);
+  }, [freeMode, page.id, page.widgets, gridCols, registry, settingsRow?.id, updatePageWidgets]);
+  // Presence-conditional widgets (the classic cards) can render NOTHING
+  // right now — no pins, no plans — and a cell of nothing is a dead row
+  // on the home screen. Track which widgets currently measure empty
+  // (ResizeObserver, so content arriving later un-collapses them).
+  const [emptyIds, setEmptyIds] = React.useState(() => new Set());
+  React.useEffect(() => {
+    const grid = gridRef.current;
+    // Edit mode shows every cell, so nothing to track there — and the
+    // edit chrome re-renders the grid, which detaches these observers.
+    // Re-running on the editMode flip re-attaches them to the LIVE grid
+    // and recomputes, so the collapse comes back after "Save & close"
+    // (it silently stayed off before).
+    if (!freeMode || editMode || !grid || typeof ResizeObserver === "undefined") {
+      setEmptyIds((cur) => (cur.size ? new Set() : cur));
+      return undefined;
+    }
+    let raf = 0;
+    // "Empty" can't be read off scrollHeight — the content wrapper (and
+    // the alignment stack inside it) stretch to the cell, so an empty
+    // card still measures 80px. Empty = nothing to read and nothing to
+    // touch inside.
+    const contentEmpty = (content) =>
+      (content.innerText || "").trim() === ""
+      && !content.querySelector("img, svg, canvas, video, iframe, input, textarea, button, [role='button']");
+    const recompute = () => {
+      raf = 0;
+      const g = gridRef.current;
+      if (!g) return;
+      const next = new Set();
+      for (const node of g.querySelectorAll("[data-widget-id]")) {
+        const content = node.querySelector("[data-widget-content]");
+        if (content && contentEmpty(content)) next.add(node.dataset.widgetId);
+      }
+      setEmptyIds((cur) => {
+        if (cur.size === next.size && [...next].every((id) => cur.has(id))) return cur;
+        return next;
+      });
+    };
+    const queue = () => { if (!raf) raf = requestAnimationFrame(recompute); };
+    const ro = new ResizeObserver(queue);
+    for (const node of grid.querySelectorAll("[data-widget-content]")) ro.observe(node);
+    // A COLLAPSED cell is 0px, so content appearing inside it never
+    // changes the observed box — watch the DOM itself too, or an empty
+    // card could never come back.
+    const mo = new MutationObserver(queue);
+    mo.observe(grid, { childList: true, subtree: true, characterData: true });
+    queue();
+    return () => { ro.disconnect(); mo.disconnect(); if (raf) cancelAnimationFrame(raf); };
+  }, [freeMode, editMode, page.id, widgets.length]);
+  // View mode collapses those empty cells and lets everything below slide
+  // up — display-only (stored positions untouched), and edit mode shows
+  // every cell so empties can still be found, moved or removed. Collapsed
+  // widgets stay mounted at zero size so they keep measuring.
+  const displayWidgets = React.useMemo(() => {
+    // Flow view: position order becomes document order (CSS grid auto-
+    // placement stacks them with natural heights); empties ride along
+    // zero-sized so they stay measurable and pop back in with content.
+    if (flowView) {
+      return [...widgets]
+        .sort((a, b) => (a.pos?.y || 0) - (b.pos?.y || 0) || (a.pos?.x || 0) - (b.pos?.x || 0))
+        .map((w) => (emptyIds.has(w.instanceId) ? { ...w, __collapsed: true } : w));
+    }
+    if (!freeMode || editMode || emptyIds.size === 0) return widgets;
+    const visible = compactVertically(widgets.filter((w) => !emptyIds.has(w.instanceId)), gridCols);
+    const byId = new Map(visible.map((w) => [w.instanceId, w]));
+    return widgets.map((w) => byId.get(w.instanceId) || { ...w, __collapsed: true });
+  }, [widgets, emptyIds, freeMode, editMode, gridCols, flowView]);
+  const placedWidgets = displayWidgets.filter((w) => !w.__collapsed);
+  // Enough rows to hold everything plus room to move things down into.
+  // Shared empty rows at the top get folded away (see SortableWidget). In
+  // edit mode they stay, so a deliberate gap can still be dragged into.
+  const topRowOffset = freeMode && !editMode && placedWidgets.length
+    ? Math.min(...placedWidgets.map((w) => w.pos?.y || 0))
+    : 0;
+  const freeRows = freeMode && placedWidgets.length
+    ? Math.max(6, ...placedWidgets.map((w) => (w.pos?.y || 0) - topRowOffset + (w.span?.rows || 1))) + (editMode ? 4 : 0)
+    : freeMode ? 6 : 0;
+  // Widgets that embed sub-surfaces need to know what else is placed —
+  // e.g. CurrentFronters hides its inline status note when the standalone
+  // status_note widget is on the page (mirrors classic layoutEnabled logic).
+  const widgetApi = { ...api, statusNotePlaced: widgets.some((w) => w.widgetId === "status_note") };
+
+  // Press-and-hold an empty spot on the home screen to enter edit mode —
+  // the phone-homescreen gesture. Background only: a press that starts on
+  // a widget or a control keeps its normal behaviour, and any movement
+  // (i.e. scrolling) cancels the hold. 600ms: longer than the 300ms
+  // widget-drag hold so the two gestures never race.
+  const holdTimer = useRef(null);
+  const holdOrigin = useRef(null);
+  const cancelHold = () => {
+    if (holdTimer.current) clearTimeout(holdTimer.current);
+    holdTimer.current = null;
+    holdOrigin.current = null;
+  };
+  const holdHandlers = editMode ? {} : {
+    onPointerDown: (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      // Portaled overlays (dialogs, drawers, action menus) bubble their
+      // pointer events through the REACT tree even though their DOM lives
+      // elsewhere — a hold inside a popup must never arm edit mode. Only
+      // presses physically inside the canvas count.
+      if (!e.currentTarget.contains(e.target)) return;
+      if (e.target.closest("[data-widget-content], button, a, input, textarea, select, [contenteditable='true']")) return;
+      holdOrigin.current = { x: e.clientX, y: e.clientY };
+      if (holdTimer.current) clearTimeout(holdTimer.current);
+      holdTimer.current = setTimeout(() => {
+        holdTimer.current = null;
+        try { navigator.vibrate?.(10); } catch { /* no haptics */ }
+        setEditMode(true);
+      }, 600);
+    },
+    onPointerMove: (e) => {
+      if (!holdTimer.current || !holdOrigin.current) return;
+      const dx = e.clientX - holdOrigin.current.x;
+      const dy = e.clientY - holdOrigin.current.y;
+      if (dx * dx + dy * dy > 64) cancelHold();
+    },
+    onPointerUp: cancelHold,
+    onPointerCancel: cancelHold,
+    onPointerLeave: cancelHold,
+  };
+
+  // ── Page-swipe detection (owner report: "the widgets are blocking me
+  // from scrolling between home screens"). Plain pointer tracking on the
+  // page wrapper: a clearly horizontal move flips the page. Gestures that
+  // belong to something else bow out: presses inside an element that can
+  // actually scroll sideways (the week grid, the pinned strip), inside a
+  // hold-owning element, or in a typing field.
+  const pageSwipe = useRef(null);
+  // ── Page-swipe detection, at the DOCUMENT, in CAPTURE phase. Widgets
+  // stop propagation for their own gestures (chat, grids, hold menus), so
+  // listening on the board wrapper meant most of a full board was swipe-
+  // dead — capture-phase document listeners run before any of that.
+  // Bounds-checked to presses inside the board. Rules:
+  //   · vertical intent → it's a scroll, forever
+  //   · typing fields and truly sideways-scrollable content keep the touch
+  //   · a press that lingers past the hold threshold belongs to a hold
+  //   · once horizontal, TOUCH is claimed via non-passive preventDefault
+  useEffect(() => {
+    // With an exit handler the gesture must run even on a one-page board —
+    // swiping past the edge hands control to the neighbouring surface.
+    if (editMode || a11yStack || (home.pages.length < 2 && !onExitLeft && !onExitRight)) return undefined;
+    // Resolved by class, not ref — framer's motion.div doesn't reliably
+    // forward a spread ref, which left the surface "missing" and every
+    // press bailing.
+    const surface = () => document.querySelector(".os-home-swipe");
+    const insideSurface = (x, y) => {
+      const el = surface();
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      // No bottom bound: a short page leaves empty screen under the board,
+      // and swiping there should page too — the whole column is the page.
+      return x >= r.left && x <= r.right && y >= r.top;
+    };
+    const blockedTarget = (t) => {
+      // Only the calendars' day cells run a HORIZONTAL press-then-drag of
+      // their own (the day-span selection) — those keep their gesture.
+      // Other hold elements (level rails, hold menus) drag vertically or
+      // not at all: a sideways move cancels their hold and reads as a
+      // page swipe, which is exactly right.
+      if (t.closest?.("[data-day-key], input, textarea, select, [contenteditable='true'], [role='slider'], [data-no-page-swipe], audio, video")) return true;
+      // Portaled overlays float OVER the board, so the coordinate bounds
+      // check passes even though the touch belongs to them — dragging the
+      // colour-picker's saturation square was flipping home pages. Any
+      // press inside a floating layer keeps its gesture.
+      if (t.closest?.("[data-color-picker-popover], .react-colorful, [role='dialog'], [data-radix-popper-content-wrapper], [data-vaul-drawer], [data-sonner-toast]")) return true;
+      const el = surface();
+      let n = t;
+      while (n && n !== el && n !== document.body) {
+        if (n.scrollWidth > n.clientWidth + 4) {
+          const o = getComputedStyle(n).overflowX;
+          if (o === "auto" || o === "scroll") return true;
+        }
+        n = n.parentElement;
+      }
+      return false;
+    };
+    const begin = (x, y, target) => {
+      if (!insideSurface(x, y) || blockedTarget(target)) { pageSwipe.current = null; return; }
+      pageSwipe.current = { x, y, t: Date.now(), dead: false, horiz: false };
+    };
+    const track = (x, y, claim) => {
+      const g = pageSwipe.current;
+      if (!g || g.dead) return;
+      const dx = x - g.x;
+      const dy = y - g.y;
+      if (!g.horiz) {
+        if (Math.abs(dy) > 18 && Math.abs(dy) > Math.abs(dx)) { g.dead = true; return; }
+        if (Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy)) g.horiz = true;
+      }
+      if (g.horiz) {
+        claim?.();
+        if (Math.abs(dx) >= 56) {
+          g.dead = true;
+          const nextIdx = pageIdx + (dx < 0 ? 1 : -1);
+          // Right-swipe past the first page: back out to the classic
+          // homescreen (the leftmost "page" of the board). Left-swipe past
+          // the last page: forward to the widget board, when this canvas
+          // is the classic home.
+          if (nextIdx < 0 && onExitLeft) { onExitLeft(); return; }
+          if (nextIdx >= visiblePages.length && onExitRight) { onExitRight(); return; }
+          goToPage(nextIdx);
+        }
+      }
+    };
+    const endAll = () => { pageSwipe.current = null; };
+
+    const onTouchStart = (e) => { if (e.touches.length === 1) begin(e.touches[0].clientX, e.touches[0].clientY, e.target); else endAll(); };
+    const onTouchMove = (e) => { if (e.touches.length === 1) track(e.touches[0].clientX, e.touches[0].clientY, () => e.cancelable && e.preventDefault()); };
+    const onPointerDown = (e) => { if (e.pointerType === "mouse" && e.button === 0) begin(e.clientX, e.clientY, e.target); };
+    const onPointerMove = (e) => { if (e.pointerType === "mouse") track(e.clientX, e.clientY, null); };
+
+    document.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
+    document.addEventListener("touchmove", onTouchMove, { capture: true, passive: false });
+    document.addEventListener("touchend", endAll, { capture: true });
+    document.addEventListener("touchcancel", endAll, { capture: true });
+    document.addEventListener("pointerdown", onPointerDown, { capture: true });
+    document.addEventListener("pointermove", onPointerMove, { capture: true });
+    document.addEventListener("pointerup", endAll, { capture: true });
+    return () => {
+      document.removeEventListener("touchstart", onTouchStart, { capture: true });
+      document.removeEventListener("touchmove", onTouchMove, { capture: true });
+      document.removeEventListener("touchend", endAll, { capture: true });
+      document.removeEventListener("touchcancel", endAll, { capture: true });
+      document.removeEventListener("pointerdown", onPointerDown, { capture: true });
+      document.removeEventListener("pointermove", onPointerMove, { capture: true });
+      document.removeEventListener("pointerup", endAll, { capture: true });
+    };
+  }, [editMode, a11yStack, home.pages.length, pageIdx, onExitLeft, onExitRight]);
+
+  // Drop-target ghost while a widget drags in free mode.
+  const [dragGhost, setDragGhost] = React.useState(null); // { x, y, cols, rows, overTrash }
+  const handleDragTarget = React.useCallback((instanceId, t) => {
+    setDragGhost(t ? { ...t } : null);
+  }, []);
+
+  // "Show as" phone / tablet: the page keeps that shape on a wider screen
+  // — a centred column of that width (auto / desktop use the full width).
+  const showAsMax = SHOW_AS_MAX_WIDTH[page.showAs] || null;
+  const canvas = (
+    <div
+      ref={gridRef}
+      data-board-a11y-stack={a11yStack ? "1" : undefined}
+      style={{
+        ...(showAsMax ? { maxWidth: showAsMax, marginLeft: "auto", marginRight: "auto", width: "100%" } : null),
+        ...(a11yStack ? null : {
+        display: "grid",
+        gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
+        gap: home.styleMode === "barebones" ? "0.375rem" : flowView ? "1rem" : "0.75rem",
+        alignItems: "start",
+        // Free pages need fixed-height rows for cell coordinates to mean
+        // anything, plus a few spare rows so there's somewhere to drag TO.
+        // Flow view deliberately omits them: rows are as tall as their
+        // content, which is the classic column look.
+        ...(freeMode && !flowView ? { gridAutoRows: `${rowPx}px`, gridTemplateRows: `repeat(${freeRows}, ${rowPx}px)` } : null),
+        }),
+      }}
+      className={a11yStack ? "space-y-3" : undefined}
+    >
+      {freeMode && dragGhost && !dragGhost.overTrash && (
+        <div aria-hidden="true" className="pointer-events-none"
+          style={{
+            gridColumn: `${dragGhost.x + 1} / span ${Math.min(dragGhost.cols, gridCols)}`,
+            gridRow: `${dragGhost.y + 1} / span ${dragGhost.rows}`,
+            border: "2px dashed var(--v2-accent)",
+            borderRadius: "var(--v2-radius, 12px)",
+            background: "color-mix(in srgb, var(--v2-accent) 10%, transparent)",
+            zIndex: 40,
+          }} />
+      )}
+      {displayWidgets.map((w) => (
+        <SortableWidget
+          key={w.instanceId}
+          widget={w}
+          collapsed={!!w.__collapsed}
+          topRowOffset={topRowOffset}
+          def={registry[w.widgetId]}
+          editMode={editMode}
+          gridCols={gridCols}
+          rowPx={rowPx}
+          onDragTarget={handleDragTarget}
+          gridRef={gridRef}
+          api={widgetApi}
+          a11yStack={a11yStack}
+          onRemove={handleRemove}
+          onSpan={handleSpan}
+          onMode={handleMode}
+          onSettings={handleSettings}
+          onMove={handleMove}
+          onConfigure={openConfig}
+          onEnterEdit={() => setEditMode(true)}
+          pickLookMode={!!pickLookFrom || multiMode}
+          pickLookSelected={multiMode ? multiIds.includes(w.instanceId) : pickLookIds.includes(w.instanceId)}
+          pickLookIsSource={!multiMode && pickLookFrom === w.instanceId}
+          onPickLookToggle={() => (multiMode
+            ? toggleMulti(w.instanceId)
+            : setPickLookIds((prev) =>
+              prev.includes(w.instanceId) ? prev.filter((x) => x !== w.instanceId) : [...prev, w.instanceId]))}
+          onHoldSelect={pickLookFrom ? null : () => { setMultiMode(true); toggleMulti(w.instanceId); }}
+          styleMode={home.styleMode}
+          free={freeMode && !flowView}
+          flowView={flowView}
+          onPos={handlePos}
+          userStyles={userStyles}
+        />
+      ))}
+    </div>
+  );
+
+  return (
+    // Clip carrier: sideways drags must not scroll the page (v0.93.0), but
+    // clipping ON the board root cropped widget glows/shadows at the
+    // content-gutter line — a hard vertical cut 16px in from the screen
+    // edge on the first and last columns ("content clipped on the left
+    // edge", tester report). The negative margin / padding pair widens the
+    // clip boundary to the screen edge (matching <main>'s own gutter) while
+    // leaving the board's geometry — and every absolute anchor inside it —
+    // exactly where it was.
+    <div className="-mx-4 lg:-mx-6 px-4 lg:px-6 overflow-x-clip">
+    <div className="pt-1 relative isolate" data-tour="experimental-home" data-home-style={home.styleMode}
+      {...holdHandlers}>
+      {/* Wallpaper — fixed under everything in this stacking context; the
+          isolate on the root keeps the negative z-index from escaping.
+          A background from the unified edit popup takes over this slot. */}
+      {pageBackground.type !== "none" ? (
+        <PageBackground background={pageBackground} />
+      ) : wallpaperUrl && (
+        <div className="fixed inset-0 -z-10 pointer-events-none" aria-hidden="true">
+          <img src={wallpaperUrl} alt="" className="w-full h-full object-cover" />
+          <div className="absolute inset-0 bg-background/55" />
+        </div>
+      )}
+      {/* The page song rides the background config — same player, same
+          volume/autoplay behavior as profile music. */}
+      {pageBackground.audio?.ref && <ProfileSongPlayer song={pageBackground.audio} />}
+      {/* Notices sit above the widgets in flow; hidden while editing so
+          the layout canvas stays clean and nothing eats a drag. */}
+      {!editMode && notices}
+      {/* A stacked board is a MODE, not a mystery: when accessibility mode
+          is flattening widgets into one column (which disables drag/resize
+          by design), say so — a tester spent a session believing the board
+          was broken because nothing would move. */}
+      {editMode && a11yStack && (
+        <p className="text-xs text-muted-foreground border border-border/40 rounded-lg px-2.5 py-1.5 mb-2">
+          ♿ Accessibility mode is on, so widgets stack in one column — use each widget's ↑↓ arrows to reorder.
+          Turning it off (Settings → Accessibility) brings back free placement and resizing.
+        </p>
+      )}
+      {/* Edit-mode chrome moved to the BOTTOM EDIT BAR (owner) — the
+          corner buttons are gone; see the fixed bar rendered below. */}
+
+      {/* Undo/redo, always on screen while editing (owner ask) — a small
+          pill above the edit bar, thumb-reachable and clear of the
+          widgets. Hidden while a sheet is open: those carry their own
+          copy in their header (the shared history dedupes instances). */}
+      {editMode && !homeSettingsOpen && !configId && !drawerOpen && (
+        <div className="fixed right-3 z-[60]"
+          style={{ bottom: "calc(var(--home-edit-bar-h, 56px) + var(--os-sab) + 10px)" }}>
+          <div className="flex items-center px-1.5 py-1.5 rounded-2xl border border-border/60 bg-background/90 backdrop-blur shadow-lg">
+            <UndoRedoButtons />
+          </div>
+        </div>
+      )}
+
+      {/* Home screen settings — what used to be the toolbar pills. */}
+      <Drawer key={homeDock} direction={homeDock} open={homeSettingsOpen} modal={false} onOpenChange={(v) => { if (!v) setHomeSettingsOpen(false); }}>
+        <DrawerContent direction={homeDock} hideHandle
+          style={{ maxHeight: `${homePeekResize.peekH}vh`, height: `${homePeekResize.peekH}vh` }}>
+          <PeekHandle resize={homePeekResize} dock={homeDock} />
+          <DrawerHeader className="pb-1">
+            <div className="flex items-start justify-between gap-2">
+              <span className="flex items-center gap-2 min-w-0">
+                <button type="button" onClick={() => setHomeSettingsOpen(false)} aria-label="Close"
+                  className="p-1 -ml-1 rounded-lg text-muted-foreground hover:text-foreground flex-shrink-0">
+                  {homeDock === "top" ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+                <DrawerTitle className="text-base truncate">Home screen</DrawerTitle>
+                <DrawerDescription className="sr-only">Layout, look and bars for this board.</DrawerDescription>
+              </span>
+              {/* Same Peek + dock-flip the Display options sheet has —
+                  this drawer IS display options on the home page, and
+                  adjusting a board you can't see defeats the point. */}
+              <span className="flex items-center gap-1.5 flex-shrink-0">
+                <UndoRedoButtons />
+                <button type="button" onClick={flipHomeDock}
+                  aria-label="Move this panel to the other edge" title="Move this panel to the other edge"
+                  className="flex items-center justify-center w-8 h-8 rounded-lg border border-border/60 text-muted-foreground hover:text-foreground">
+                  {homeDock === "top" ? <ArrowDownToLine className="w-3.5 h-3.5" /> : <ArrowUpToLine className="w-3.5 h-3.5" />}
+                </button>
+              </span>
+            </div>
+          </DrawerHeader>
+          <div className="px-4 overflow-y-auto overscroll-contain flex-1 min-h-0"
+            style={{ paddingBottom: "calc(var(--os-sab) + 24px)" }}>
+            <p className="text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+              This home screen
+            </p>
+            <div className="flex flex-wrap items-center gap-1.5">
+            {eventPrefix === "os-classic" ? (
+              // On the classic home the escape hatch is RESET, not "back
+              // to classic" (owner call) — this IS the classic home, and
+              // the old button quietly disabled the whole canvas.
+              <button
+                type="button"
+                onClick={() => {
+                  setHomeSettingsOpen(false);
+                  setEditMode(false);
+                  window.dispatchEvent(new CustomEvent("os-classic-reset-home"));
+                }}
+                className="text-xs px-2.5 py-1.5 rounded-full border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all flex items-center gap-1"
+              >
+                <Undo2 className="w-3 h-3" /> Reset to default…
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleBackToClassic}
+                className="text-xs px-2.5 py-1.5 rounded-full border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all flex items-center gap-1"
+              >
+                <Undo2 className="w-3 h-3" /> Back to classic
+              </button>
+            )}
+            {pageIsFree && (
+              <button
+                type="button"
+                onClick={collapseGaps}
+                title="Pull widgets up to close empty gaps on this page"
+                className="text-[0.625rem] px-2 py-1 rounded-full border border-border/50 text-muted-foreground hover:text-foreground whitespace-nowrap"
+              >
+                Close gaps
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                const i = DENSITIES.findIndex((d) => d.cols === (home.grid?.phoneCols || 4) && d.rowPx === rowPx);
+                setDensity(DENSITIES[(i + 1) % DENSITIES.length]);
+              }}
+              title="Grid width — how many columns across (widgets are rescaled to keep their shape)"
+              className="text-[0.625rem] px-2 py-1 rounded-full border border-border/40 text-muted-foreground whitespace-nowrap hover:text-foreground transition-all"
+            >
+              Grid: {(DENSITIES.find((d) => d.cols === (home.grid?.phoneCols || 4) && d.rowPx === rowPx) || DENSITIES[0]).label}
+            </button>
+            </div>
+
+            {/* Everything else IS the unified edit popup
+                (docs/v2-edit-menu-spec.md) — the same sections as Display
+                options and the widget sheet. The pills above are the only
+                board-specific extras the wireframe doesn't cover (layout
+                flow, columns, style, wallpaper folder rotation); the quick
+                action keys and the {alters} bar live in its Bars section. */}
+            <div className="mt-4 pt-3 border-t border-border/40">
+              {homeSettingsOpen && (
+                <React.Suspense key={homeSettingsNonce} fallback={<p className="text-xs text-muted-foreground py-3">Loading…</p>}>
+                  <UiEditSheetBody />
+                </React.Suspense>
+              )}
+            </div>
+          </div>
+        </DrawerContent>
+      </Drawer>
+
+      {/* Pinned-alters bar (top position) — persists across page swipes. */}
+      {altersTop && (
+        <div className="mb-2 rounded-2xl border border-border/40 bg-card/50 px-2 py-1.5">
+          {altersCollapsed ? (
+            <button type="button" onClick={toggleAltersCollapsed}
+              aria-label={`Show pinned ${t.alters}`} aria-expanded="false"
+              className="w-full flex items-center justify-center py-1 text-muted-foreground hover:text-foreground">
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+          ) : (
+            <div className="relative">
+              <button type="button" onClick={toggleAltersCollapsed}
+                aria-label={`Hide pinned ${t.alters}`} aria-expanded="true"
+                className="absolute -top-1 left-0 z-10 p-1 text-muted-foreground/70 hover:text-foreground">
+                <ChevronUp className="w-3.5 h-3.5" />
+              </button>
+              <PinnedAltersGallery showHeader={false} showGear onGear={() => openBarsEditor("alters")} valign={altersValign} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Page dots — tappable; edit mode adds a "+" for a new page.
+          When this board is hosted by the classic home (onExitLeft), the
+          home screen is genuinely the page to the LEFT, so it gets a
+          leading control in the same strip. Without it the ONLY way back
+          was a swipe: unusable with a mouse on desktop, and unusable for
+          anyone who can't perform a drag gesture. That also means the
+          strip has to render even with a single board page. */}
+      {(visiblePages.length > 1 || editMode || onExitLeft) && (
+        <div className="flex items-center justify-center gap-1.5 mb-2" role="tablist" aria-label="Homescreen pages">
+          {onExitLeft && (
+            <button
+              type="button"
+              onClick={onExitLeft}
+              aria-label="Back to the home screen"
+              title="Back to the home screen"
+              className="min-w-[24px] min-h-[24px] flex items-center justify-center rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+          )}
+          {visiblePages.map((p, i) => (
+            <button
+              key={p.id}
+              type="button"
+              role="tab"
+              aria-selected={p.id === page.id}
+              aria-label={p.label || `Page ${i + 1}`}
+              title={p.label || `Page ${i + 1}`}
+              onClick={() => goToPage(i)}
+              className="min-w-[24px] min-h-[24px] flex items-center justify-center"
+            >
+              <span
+                // Other pages use the foreground colour at low opacity —
+                // muted-foreground can vanish into a dark background, which
+                // made it look like there was only one page.
+                className={`rounded-full transition-all ${
+                  p.id === page.id ? "w-2.5 h-2.5 bg-primary" : "w-2 h-2 bg-foreground opacity-25"
+                }`}
+              />
+            </button>
+          ))}
+          {editMode && (
+            <button
+              type="button"
+              onClick={handleAddPage}
+              aria-label="Add page"
+              title="Add page"
+              className="min-w-[24px] min-h-[24px] flex items-center justify-center rounded-full text-muted-foreground hover:text-primary"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Page name / default / delete — edit mode only. */}
+      {editMode && (
+        <div className="flex items-center justify-center gap-1.5 mb-3">
+          <input
+            key={page.id}
+            defaultValue={page.label}
+            placeholder={`Page ${pageIdx + 1}`}
+            aria-label="Page name"
+            onBlur={(e) => {
+              const v = e.target.value.trim();
+              if (v !== page.label) handleRenamePage(v);
+            }}
+            className="h-7 w-32 px-2 rounded-lg border border-border/50 bg-background text-xs text-center focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+          <button
+            type="button"
+            onClick={() => setAudienceOpen((v) => !v)}
+            aria-expanded={audienceOpen}
+            title={page.visibleTo?.length
+              ? `Only shown while these ${t.alters} are ${t.fronting}`
+              : `Shown to everyone \u2014 tap to limit this page to certain ${t.alters}`}
+            className={`h-7 px-2 rounded-lg border text-[0.625rem] whitespace-nowrap ${
+              page.visibleTo?.length
+                ? "border-primary/50 bg-primary/10 text-primary"
+                : "border-border/50 text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {page.visibleTo?.length
+              ? (page.visibleMode === "except" ? `Not ${page.visibleTo.length}` : `For ${page.visibleTo.length}`)
+              : "Everyone"}
+          </button>
+          <button
+            type="button"
+            onClick={handleSetDefaultPage}
+            aria-pressed={home.defaultPageId === page.id}
+            aria-label="Make this the default page"
+            title={home.defaultPageId === page.id ? "Default page" : "Make this the default page"}
+            className={`min-w-[28px] min-h-[28px] flex items-center justify-center rounded-lg transition-colors ${
+              home.defaultPageId === page.id
+                ? "text-amber-500 bg-amber-500/10"
+                : "text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10"
+            }`}
+          >
+            <Star className="w-3.5 h-3.5" fill={home.defaultPageId === page.id ? "currentColor" : "none"} />
+          </button>
+          {/* Overwrite-as-homescreen — only meaningful when this board is
+              the classic home's swipe-left page (onExitLeft is only passed
+              by that host; under the full new UI the board IS home). */}
+          {onExitLeft && (
+            <button
+              type="button"
+              onClick={toggleHomeOverride}
+              aria-pressed={homeOverrideOn}
+              aria-label="Use this page as the home screen"
+              title={homeOverrideOn
+                ? "This page is your home screen — the app opens here and Home comes here. Tap to make the classic home screen home again."
+                : "Use this page as the home screen — the app opens here and the Home button comes here"}
+              className={`min-w-[28px] min-h-[28px] flex items-center justify-center rounded-lg transition-colors ${
+                homeOverrideOn
+                  ? "text-primary bg-primary/10"
+                  : "text-muted-foreground hover:text-primary hover:bg-primary/10"
+              }`}
+            >
+              <Home className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {home.pages.length > 1 && (
+            <button
+              type="button"
+              onClick={handleDeletePage}
+              aria-label="Delete this page"
+              title="Delete this page and its widgets (Undo available)"
+              className="min-w-[28px] min-h-[28px] flex items-center justify-center rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Show as — this page's shape on every device (owner, 2026-10-01).
+          Auto fits whatever screen shows it; the others keep that shape
+          everywhere, so a phone page can be built from the computer. */}
+      {editMode && (
+        <div className="flex items-center justify-center gap-1 mb-3" role="radiogroup" aria-label="Show this page as">
+          <span className="text-[0.625rem] text-muted-foreground mr-1">Show as</span>
+          {PAGE_SHOW_AS.map((v) => (
+            <button key={v} type="button" role="radio" aria-checked={(page.showAs || "auto") === v}
+              onClick={() => setPageShowAs(v)}
+              className={`h-6 px-2 rounded-lg border text-[0.625rem] capitalize ${
+                (page.showAs || "auto") === v
+                  ? "border-primary/50 bg-primary/10 text-primary"
+                  : "border-border/50 text-muted-foreground hover:text-foreground"
+              }`}>{v}</button>
+          ))}
+        </div>
+      )}
+
+      {/* Who this page is for. Soft hiding: the page still exists, is still
+          in your backup, and if the current fronters can't see ANY page the
+          board shows them all rather than nothing. */}
+      {editMode && audienceOpen && (
+        <div className="mx-3 mb-3 p-2 rounded-xl border border-border/50 bg-background/80">
+          <div className="flex items-center gap-1 mb-1.5">
+            {[["only", "Only these"], ["except", "Everyone except"]].map(([m, label]) => (
+              <button key={m} type="button"
+                onClick={() => persist({ ...home, pages: home.pages.map((p) => (p.id === page.id ? { ...p, visibleMode: m } : p)) })}
+                className={`text-[0.625rem] px-2 py-1 rounded-full border transition-all ${
+                  (page.visibleMode || "only") === m
+                    ? "border-primary/50 bg-primary/10 text-primary"
+                    : "border-border/50 text-muted-foreground hover:text-foreground"
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="text-[0.625rem] text-muted-foreground mb-1.5">
+            {!page.visibleTo?.length
+              ? `Shown to everyone. Pick ${t.alters} below.`
+              : page.visibleMode === "except"
+                ? `Hidden while one of these ${t.alters} is ${t.fronting}.`
+                : `Only shown while one of these ${t.alters} is ${t.fronting}.`}
+          </p>
+          <div className="flex items-center justify-end pb-1">
+            <AlterSortToggle sorter={audienceSorter} showLabel className="text-[0.625rem] py-1" />
+          </div>
+          <SearchableMultiList
+            options={audienceSorter.sort((api?.alters || []).filter((a) => !a.is_archived))
+              .map((a) => ({ id: a.id, label: a.name || "?", color: a.color }))}
+            selectedIds={page.visibleTo || []}
+            searchPlaceholder={`Search ${t.alters}...`}
+            onToggle={(id) => {
+              const cur = page.visibleTo || [];
+              setPageAudience(cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
+            }}
+          />
+          {page.visibleTo?.length > 0 && (
+            <button type="button" onClick={() => setPageAudience([])}
+              className="mt-1 text-[0.625rem] text-primary hover:underline">
+              Show this page to everyone
+            </button>
+          )}
+        </div>
+      )}
+
+      {widgets.length === 0 && (
+        <button
+          type="button"
+          // "Tap to add widgets" must actually land on adding widgets:
+          // enter edit mode (the drawer's Add-widget tab only exists there)
+          // and open the drawer straight onto that tab.
+          onClick={() => { setEditMode(true); setDrawerTabRequest("widgets"); setDrawerOpen(true); }}
+          className="w-full py-16 rounded-2xl border-2 border-dashed border-border/50 text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors flex flex-col items-center gap-2"
+        >
+          <Grid2x2 className="w-8 h-8" />
+          <span className="text-sm font-medium">
+            {home.pages.length > 1 ? "Empty page — tap to add widgets" : "Empty homescreen — tap to add widgets"}
+          </span>
+        </button>
+      )}
+
+      {a11yStack ? (
+        canvas
+      ) : !editMode ? (
+        // Swipe between pages; the key remount plays a directional slide
+        // when the page changes via dots too. The swipe is detected by the
+        // pointer handlers below rather than framer's drag: a board full of
+        // widgets is a board full of scroll containers and gesture
+        // surfaces, and the drag gesture lost to every one of them — the
+        // manual detector only needs pointer events, which nothing eats.
+        <motion.div
+          key={page.id}
+          // min-height so swipes register on the empty space of sparse pages,
+          // not just on the widgets themselves.
+          // select-none: dragging across a widget's text is how pages swipe
+          // — without it the drag paints a text selection instead (typed
+          // fields opt back in via the CSS rule in index.css).
+          className={`os-home-swipe select-none ${home.pages.length > 1 ? "min-h-[55vh]" : ""}`}
+          initial={swipeDir === 0 ? false : { x: swipeDir * 72, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          transition={{ duration: 0.18, ease: "easeOut" }}
+        >
+          {canvas}
+        </motion.div>
+      ) : (
+        <DndContext sensors={sensors} collisionDetection={closestCenter}
+          onDragStart={({ active }) => setDraggingId(active.id)}
+          onDragCancel={() => setDraggingId(null)}
+          onDragEnd={handleDragEnd}>
+          <TrashZone active={!!draggingId} />
+          <SortableContext items={widgets.map((w) => w.instanceId)} strategy={rectSortingStrategy}>
+            {canvas}
+          </SortableContext>
+        </DndContext>
+      )}
+
+      {/* Persistent bottom stack — pinned-alters bar (bottom position) above
+          the quick-action bar; both float above the bottom nav and stay put
+          while swiping between pages. */}
+      {(barIds.length > 0 || altersBottom) && (
+        <div
+          // Raised over the edit toolbar while the bar's own options are
+          // open, so it stays in view when that sheet is docked at the top.
+          className={`fixed left-0 right-0 ${configuringBar ? "z-[75]" : "z-40"} flex flex-col items-center gap-1.5 pointer-events-none`}
+          style={{ bottom: "calc(var(--bottom-nav-height, 56px) + var(--os-sab) + 8px)" }}
+        >
+          <AnimatePresence initial={false}>
+          {altersBottom && !altersCollapsed && (
+            <motion.div key="board-alters-bar"
+              initial={{ y: 24, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 24, opacity: 0 }}
+              transition={{ duration: 0.18, ease: "easeOut" }}
+              // w-full: the stack is `items-center`, so without an explicit
+              // width this child sized itself to its CONTENT and grew past
+              // the screen — the chips got cut off at the edge and nothing
+              // scrolled, because the strip never overflowed its own box.
+              className="pointer-events-auto w-full min-w-0">
+            <AltersBarCard settingsRow={settingsRow} home={home} className="mx-3"
+              onCollapse={() => writePinnedBar({ collapsed: true })}
+              onGear={() => openBarsEditor("alters")} />
+            </motion.div>
+          )}
+          </AnimatePresence>
+          {/* No floating tab here: the ONE way to fold this bar in or out
+              is the bottom chrome's split handle (left half = this bar,
+              right half = quick actions). A second control floating over
+              the board was redundant. */}
+          {barIds.length > 0 && (
+            <div className="pointer-events-auto max-w-full overflow-x-auto px-3 py-1.5 rounded-2xl bg-background/90 backdrop-blur-xl border border-border/60 shadow-lg mx-3">
+              <QuickCheckinButtons
+                dense
+                showCheckin={barIds.includes("quick_checkin")}
+                hold={api?.hold || {}}
+                holdProgress={api?.holdProgress || 0}
+                holdActive={api?.holdActive || false}
+                show={{
+                  start_activity: barIds.includes("start_activity"),
+                  start_symptom: barIds.includes("start_symptom"),
+                  quick_task: barIds.includes("quick_task"),
+                  quick_plan: barIds.includes("quick_plan"),
+                }}
+                on={api?.quickOn || {}}
+                quickActionsSlot={api?.quickActionsSlot || null}
+              />
+            </div>
+          )}
+        </div>
+      )}
+      {/* Reserve space so the fixed bars don't cover the last widgets. */}
+      {(barIds.length > 0 || altersBottom) && (
+        <div
+          style={{
+            height:
+              (barIds.length > 0 ? 68 : 0) +
+              (altersBottom ? 96 : 0),
+          }}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Pick-widgets overlay: tap widgets to include, then apply. */}
+      {multiMode && (
+        <div className="fixed left-0 right-0 z-[70] px-3 flex items-center gap-2"
+          style={{ bottom: "calc(var(--home-edit-bar-h, var(--bottom-nav-height, 56px)) + var(--os-sab) + 12px)" }}>
+          <div className="flex-1 rounded-2xl border border-border/60 bg-background/95 backdrop-blur-xl shadow-lg px-3 py-2 flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs flex-1 min-w-0 truncate">
+              {multiIds.length ? `${multiIds.length} selected` : "Tap widgets to select"}
+            </span>
+            <button type="button" onClick={selectAllOnPage}
+              className="text-xs px-2.5 py-1.5 rounded-lg border border-border/50 text-muted-foreground">All</button>
+            <button type="button" disabled={!multiIds.length} onClick={() => setStylePickerOpen(true)}
+              className="text-xs px-2.5 py-1.5 rounded-lg border border-border/50 text-muted-foreground disabled:opacity-40">Style…</button>
+            <button type="button" disabled={!multiIds.length} onClick={() => setConfigId(multiIds[0])}
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground disabled:opacity-40">Edit all</button>
+            <button type="button" onClick={exitMulti}
+              className="text-xs px-2.5 py-1.5 rounded-lg border border-border/50 text-muted-foreground">Deselect</button>
+          </div>
+        </div>
+      )}
+      {pickLookFrom && (
+        <div className="fixed left-0 right-0 z-[70] px-3 flex items-center gap-2"
+          style={{ bottom: "calc(var(--bottom-nav-height, 56px) + var(--os-sab) + 12px)" }}>
+          <div className="flex-1 rounded-2xl border border-border/60 bg-background/95 backdrop-blur-xl shadow-lg px-3 py-2 flex items-center gap-2">
+            <span className="text-xs flex-1 min-w-0 truncate">
+              {pickLookIds.length ? `${pickLookIds.length} selected` : "Tap widgets to apply the look to"}
+            </span>
+            <button type="button" onClick={() => { setPickLookFrom(null); setPickLookIds([]); }}
+              className="text-xs px-2.5 py-1.5 rounded-lg border border-border/50 text-muted-foreground">Cancel</button>
+            <button type="button" disabled={!pickLookIds.length}
+              onClick={() => { applyLookTo(pickLookFrom, pickLookIds); setPickLookFrom(null); setPickLookIds([]); }}
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground disabled:opacity-40">Apply</button>
+          </div>
+        </div>
+      )}
+
+      <AppDrawer
+        open={drawerOpen}
+        onClose={() => { setDrawerOpen(false); setDrawerTabRequest(null); }}
+        initialTab={drawerTabRequest}
+        placedWidgetIds={page.widgets.map((w) => w.widgetId)}
+        registry={registry}
+        onAddWidget={handleAddWidget}
+        onDropWidget={handleDropWidget}
+        api={widgetApi}
+        userStyles={userStyles}
+        onAddShortcut={(appId) => handleAddWidget("app_shortcut", { targetId: appId }, { edit: false })}
+        pinOnTap={editMode}
+        folders={home.drawer.folders}
+        onSaveFolders={(folders) => persist({ ...home, drawer: { ...home.drawer, folders } })}
+        order={home.drawer.order || []}
+        onSaveOrder={(order) => persist({ ...home, drawer: { ...home.drawer, order } })}
+      />
+
+      <AssetPickerModal
+        open={!!assetPickerFor}
+        onClose={() => setAssetPickerFor(null)}
+        onSelect={handleAssetSelected}
+      />
+
+      {/* Per-widget options sheet — derived live from home state. */}
+      <WidgetConfigSheet
+        onRemove={(id) => { handleRemove(id); setConfigId(null); }}
+        userStyles={userStyles}
+        resolvedLook={widgetLookFor(
+          widgets.find((w) => w.instanceId === configId)?.settings || {},
+          userStyles, home.styleMode
+        )}
+        onSaveStyle={(label, look) => persistStyles([...userStyles, { id: newStyleId(), label, look }])}
+        onDeleteStyle={(id) => persistStyles(userStyles.filter((x) => x.id !== id))}
+        onPickBackground={(instanceId) => setAssetPickerFor({ bg: instanceId })}
+        api={widgetApi}
+        widget={widgets.find((w) => w.instanceId === configId) || null}
+        def={registry[widgets.find((w) => w.instanceId === configId)?.widgetId]}
+        pageStyleId={home.styleMode}
+        onClose={() => setConfigId(null)}
+        onMode={handleMode}
+        onSettings={handleSettings}
+        onResetWidget={handleResetWidget}
+        // The sheet's close guard: "Undo my changes" puts the widget back
+        // exactly how it was when the sheet opened.
+        onRestoreSnapshot={(id, snap) => {
+          updatePageWidgets((ws) => ws.map((w) => (
+            w.instanceId === id ? { ...w, mode: snap.mode, settings: snap.settings || {} } : w
+          )));
+        }}
+        onPickIcon={(instanceId) => setAssetPickerFor({ icon: instanceId })}
+        onEditLayout={() => { setEditMode(true); setConfigId(null); }}
+        onApplyLook={handleApplyLook}
+      />
+
+      {/* Page style picker */}
+      <Drawer open={stylePickerOpen} onOpenChange={(v) => { if (!v) setStylePickerOpen(false); }}>
+        <DrawerContent className="max-h-[85vh]">
+          <DrawerHeader className="pb-1">
+            <DrawerTitle className="text-base">Homescreen style</DrawerTitle>
+            <DrawerDescription className="text-xs">
+              Applies to every widget on the homescreen. Individual widgets can override it from their gear menu.
+            </DrawerDescription>
+          </DrawerHeader>
+          <div
+            className="px-4 pb-6 space-y-1 overflow-y-auto overscroll-contain"
+            style={{ paddingBottom: "calc(var(--os-sab) + 24px)" }}
+          >
+            {/* Each row previews the real thing: a style is just look values
+                now, so the swatch is rendered by the same pipeline a widget
+                uses. Searchable because the library is meant to grow. */}
+            <input
+              value={styleQuery}
+              onChange={(e) => setStyleQuery(e.target.value)}
+              placeholder="Search styles…"
+              className="w-full h-9 px-3 mb-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            {[
+              ...HOME_STYLES.map((st) => ({ id: st.id, label: st.label, description: st.description, look: getStyleLook(st.id), mine: false })),
+              ...userStyles.map((st) => ({ id: `${USER_STYLE_PREFIX}${st.id}`, label: st.label, description: "Your saved style", look: st.look || {}, mine: true })),
+            ]
+              .filter((st) => !styleQuery.trim() || st.label.toLowerCase().includes(styleQuery.trim().toLowerCase()))
+              .map((st) => (
+                <div key={st.id}
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-sm transition-all ${
+                    home.styleMode === st.id ? "border-primary/60 bg-primary/10" : "border-border/40"
+                  }`}>
+                  <span aria-hidden="true" className="w-10 h-10 flex-shrink-0"
+                    style={{ ...lookToStyle(st.look), ...boxStyle() }} />
+                  <button type="button"
+                    onClick={() => {
+                      if (multiMode && multiIds.length) {
+                        // A selection is showing — the tap means "give
+                        // THESE this style", not "restyle the board".
+                        const ids = new Set(multiIds);
+                        persist({
+                          ...home,
+                          pages: home.pages.map((p) => ({
+                            ...p,
+                            widgets: p.widgets.map((w) => (ids.has(w.instanceId)
+                              ? { ...w, settings: { ...w.settings, style: st.id } }
+                              : w)),
+                          })),
+                        });
+                        toast.success(`${st.label} applied to ${ids.size} widget${ids.size === 1 ? "" : "s"}`);
+                      } else {
+                        persist({ ...home, styleMode: st.id });
+                      }
+                      setStylePickerOpen(false);
+                    }}
+                    className="flex-1 min-w-0 text-left">
+                    <span className="font-medium">{st.label}</span>
+                    <span className="text-xs text-muted-foreground block truncate">
+                      {styleNotes === st.id
+                        ? (() => {
+                            const cov = lookCoverage(st.look);
+                            return `Changes ${cov.covers.map((g) => g.label.toLowerCase()).join(", ") || "nothing"} \u00b7 leaves ${cov.leaves.map((g) => g.label.toLowerCase()).join(", ")} alone`;
+                          })()
+                        : st.description}
+                    </span>
+                  </button>
+                  {/* A style that decides every part of the look needs no
+                      caveat. A partial one says so, and the star spells out
+                      what it will and won't change. */}
+                  {!lookCoverage(st.look).complete && (
+                    <button type="button"
+                      aria-label={`What ${st.label} changes`}
+                      title="Partial style — see what it changes"
+                      onClick={() => setStyleNotes(styleNotes === st.id ? null : st.id)}
+                      className={`p-1 flex-shrink-0 ${styleNotes === st.id ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}>
+                      <Star className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  {/* Start from any style instead of from nothing. */}
+                  <button type="button"
+                    title={`Copy ${st.label} into this page's widgets to edit`}
+                    onClick={() => {
+                      persist({
+                        ...home,
+                        styleMode: "current",
+                        pages: home.pages.map((p) => (p.id !== page.id ? p : {
+                          ...p,
+                          widgets: p.widgets.map((w) => ({ ...w, settings: { ...w.settings, ...st.look } })),
+                        })),
+                      });
+                      setStylePickerOpen(false);
+                      toast.success(`${st.label} copied onto this page — edit any widget to tweak it`);
+                    }}
+                    className="text-[0.625rem] px-2 py-1 rounded-full border border-border/50 text-muted-foreground hover:text-foreground flex-shrink-0">
+                    Use as a base
+                  </button>
+                </div>
+              ))}
+          </div>
+        </DrawerContent>
+      </Drawer>
+
+      {/* ── EDIT BAR — replaces the bottom nav while editing (owner spec).
+          z-[70]: above the vaul sheets (z-50) so Display options / widget
+          options never cover it. ── */}
+      {editMode && createPortal(
+        <div ref={editBarRef} className="fixed bottom-0 left-0 right-0 z-[70] border-t backdrop-blur-xl"
+          style={{
+            background: "var(--color-bg)",
+            borderColor: "color-mix(in srgb, var(--v2-accent) 30%, transparent)",
+            paddingBottom: "var(--os-sab)",
+          }}>
+          <div className="flex items-center gap-2 px-3 pt-2 pb-1.5 border-b border-border/30">
+            <span className="text-[0.5625rem] uppercase tracking-wide text-muted-foreground">Bars</span>
+            <button type="button" aria-pressed={barsPreview}
+              aria-label={barsPreview ? "Hide the bars while editing" : "Preview the bars"}
+              title={barsPreview ? "Hide the bars while editing" : "Preview the bars"}
+              onClick={() => setBarsPreview((v) => !v)}
+              className={`w-8 h-8 rounded-full border flex items-center justify-center flex-shrink-0 ${barsPreview ? "border-[var(--v2-accent)] text-[var(--v2-accent)]" : "border-border/50 text-muted-foreground"}`}>
+              {barsPreview ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+            </button>
+            <button type="button" aria-label="Quick actions bar options" title="Quick actions bar options"
+              onClick={() => openBarsEditor("actions")}
+              className="text-[0.6875rem] px-3 h-8 rounded-full border border-border/50 text-muted-foreground hover:text-foreground flex items-center gap-1.5">
+              <Settings2 className="w-3.5 h-3.5" /> Quick actions
+            </button>
+            <button type="button" aria-label="Pinned bar options" title="Pinned bar options"
+              onClick={() => openBarsEditor("alters")}
+              className="text-[0.6875rem] px-3 h-8 rounded-full border border-border/50 text-muted-foreground hover:text-foreground flex items-center gap-1.5">
+              <Settings2 className="w-3.5 h-3.5" /> Pinned bar
+            </button>
+          </div>
+          <div className="flex items-stretch justify-around" style={{ height: 52 }}>
+            <button type="button" aria-label="Add widgets" title="Add widgets"
+              onClick={() => openWidgetDrawer("widgets")}
+              className="flex-1 flex flex-col items-center justify-center gap-0.5 text-muted-foreground hover:text-foreground">
+              <LayoutGrid className="w-4 h-4" />
+              <span className="text-[0.5625rem]">Widgets</span>
+            </button>
+            <button type="button" aria-label={multiMode ? "Stop selecting" : "Select widgets"}
+              title={multiMode ? "Stop selecting" : "Select several widgets to change together"}
+              onClick={() => (multiMode ? exitMulti() : setMultiMode(true))}
+              className={`flex-1 flex flex-col items-center justify-center gap-0.5 ${multiMode ? "text-[var(--v2-accent)]" : "text-muted-foreground hover:text-foreground"}`}>
+              <CheckSquare className="w-4 h-4" />
+              <span className="text-[0.5625rem]">Select</span>
+            </button>
+            <button type="button" aria-label="Close gaps" title="Close gaps" disabled={!pageIsFree}
+              onClick={collapseGaps}
+              className="flex-1 flex flex-col items-center justify-center gap-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30">
+              <ArrowUpToLine className="w-4 h-4" />
+              <span className="text-[0.5625rem]">Close gaps</span>
+            </button>
+            <button type="button" aria-label="Display options" title="Display options"
+              onClick={() => openHomeSettings()}
+              className="flex-1 flex flex-col items-center justify-center gap-0.5 text-muted-foreground hover:text-foreground">
+              <Settings2 className="w-4 h-4" />
+              <span className="text-[0.5625rem]">Display</span>
+            </button>
+            <div className="flex-1 relative">
+              <button type="button" aria-label="Save" title="Save" aria-expanded={saveMenuOpen}
+                onClick={() => { setSaveMenuOpen((v) => !v); setExitMenuOpen(false); }}
+                className={`w-full h-full flex flex-col items-center justify-center gap-0.5 ${saveMenuOpen ? "text-[var(--v2-accent)]" : "text-muted-foreground hover:text-foreground"}`}>
+                <Check className="w-4 h-4" />
+                <span className="text-[0.5625rem]">Save</span>
+              </button>
+              {saveMenuOpen && (
+                <div className="absolute bottom-full mb-1 right-0 min-w-[190px] rounded-xl border border-border/60 bg-card shadow-xl p-1 space-y-0.5">
+                  <button type="button" onClick={exitSave}
+                    className="w-full text-left text-xs px-2.5 py-2 rounded-lg hover:bg-muted/40">Save & close</button>
+                  <button type="button" onClick={() => openPackSheet("export")}
+                    className="w-full text-left text-xs px-2.5 py-2 rounded-lg hover:bg-muted/40">Save / share as pack…</button>
+                  <button type="button" onClick={() => openPackSheet("import")}
+                    className="w-full text-left text-xs px-2.5 py-2 rounded-lg hover:bg-muted/40">Import a pack…</button>
+                </div>
+              )}
+            </div>
+            <div className="flex-1 relative">
+              <button type="button" aria-label="Exit edit mode" title="Exit edit mode" aria-expanded={exitMenuOpen}
+                onClick={() => { setExitMenuOpen((v) => !v); setSaveMenuOpen(false); }}
+                className={`w-full h-full flex flex-col items-center justify-center gap-0.5 ${exitMenuOpen ? "text-[var(--v2-accent)]" : "text-muted-foreground hover:text-foreground"}`}>
+                <X className="w-4 h-4" />
+                <span className="text-[0.5625rem]">Exit</span>
+              </button>
+              {exitMenuOpen && (
+                <div className="absolute bottom-full mb-1 right-0 min-w-[190px] rounded-xl border border-border/60 bg-card shadow-xl p-1 space-y-0.5">
+                  <button type="button" onClick={exitSave}
+                    className="w-full text-left text-xs px-2.5 py-2 rounded-lg hover:bg-muted/40">Save & close</button>
+                  <button type="button" onClick={exitDiscard}
+                    className="w-full text-left text-xs px-2.5 py-2 rounded-lg text-destructive hover:bg-destructive/10">Discard changes</button>
+                  <button type="button" onClick={() => setExitMenuOpen(false)}
+                    className="w-full text-left text-xs px-2.5 py-2 rounded-lg hover:bg-muted/40">Keep editing</button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+      <SetupPackSheet open={packSheetOpen} onClose={() => setPackSheetOpen(false)} initialTab={packSheetTab}
+        home={home} currentPageId={page?.id} uiV2Raw={settingsRow?.ui_v2 || {}} userStyles={userStyles} settingsRow={settingsRow} />
+    </div>
+    </div>
+  );
+}

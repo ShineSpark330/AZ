@@ -1,0 +1,142 @@
+// THE plan-creation path (consolidation Phase 4).
+//
+// QuickPlanComposer and ActivityPlanModal each carried a full copy of this:
+// recurrence expansion, the plan-vs-logged rule, the 19-field
+// Activity.create, derived-to-do creation and linked-to-do due-date sync.
+// Copies drift — they already had: the composer treated a quick plan dated
+// today as a PLAN even if its time had passed, while the modal silently
+// logged it. This module is now the only writer; both surfaces call it.
+//
+// Divergence resolution: a plan whose DATE is today-or-later is a plan
+// instance even if its time-of-day has passed. Plans are intentions, not
+// timestamps. (Originally only quick plans worked this way; timed plans
+// kept a `> Date.now()` rule that silently logged anything scheduled for
+// earlier the same day — see the note at the rule itself.)
+//
+// Callers own their UI concerns (validation, toasts, resets, query
+// invalidation); this owns exactly the writes.
+
+import { addDays, addWeeks, addMonths, addYears, format } from "date-fns";
+import { base44 } from "@/api/base44Client";
+import { ACTIVITY_STATUSES } from "@/lib/activityStatus";
+
+const todayLocalISODate = () => format(new Date(), "yyyy-MM-dd");
+
+function advance(dt, n, interval) {
+  if (interval === "daily") return addDays(dt, n);
+  if (interval === "weekly") return addWeeks(dt, n);
+  if (interval === "biweekly") return addWeeks(dt, n * 2);
+  if (interval === "monthly") return addMonths(dt, n);
+  // Yearly (birthdays, anniversaries). addYears keeps the month/day and clamps
+  // Feb 29 to Feb 28 in non-leap years.
+  if (interval === "yearly") return addYears(dt, n);
+  return dt;
+}
+
+// How many occurrences a repeat can create. A yearly plan can run much longer
+// than the 52 that suits daily/weekly/monthly (52 days is two months; 52
+// birthdays is a lifetime but 100 gives headroom).
+export const maxOccurrencesFor = (interval) => (interval === "yearly" ? 100 : 52);
+
+export async function createPlan({
+  // One entry per activity in the plan: { activity_name, activity_category_ids, color? }
+  records,
+  timestamp,                    // Date of the first occurrence
+  durationMinutes = null,
+  alterIds = [],
+  notes = null,
+  location = null,
+  isQuickPlan = false,
+  isCritical = false,
+  leadSteps = null,
+  reminderOffset = null,
+  recurrence = { interval: "none", count: 1 },
+  authorAlterIds = [],          // who signed the note (signposts) — stored as author_alter_ids
+  linkedTask = null,            // existing Task object to link + date-sync
+  createTodo = false,           // derive a new Task when none is linked
+  todoTitle = "",
+}) {
+  // "Set this plan as a to-do" — build the Task up-front so its id can flow
+  // into task_id on every Activity (including recurring ones).
+  let derivedTask = null;
+  if (createTodo && !linkedTask) {
+    derivedTask = await base44.entities.Task.create({
+      title: (todoTitle || records[0]?.activity_name || "").trim(),
+      completed: false,
+      priority: "medium",
+      due_date: format(timestamp, "yyyy-MM-dd"),
+      notes: (notes || "").trim() || null,
+    });
+  }
+  const effectiveLinkedTask = linkedTask || derivedTask;
+
+  const recurrenceGroupId = recurrence.interval !== "none"
+    ? `rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    : null;
+  const occurrences = recurrenceGroupId
+    ? Array.from(
+        { length: Math.max(1, Math.min(maxOccurrencesFor(recurrence.interval), recurrence.count || 1)) },
+        (_, i) => advance(timestamp, i, recurrence.interval)
+      )
+    : [timestamp];
+
+  const createdIds = [];
+
+  for (const occ of occurrences) {
+    // A recurring occurrence is always a PLAN instance to resolve later —
+    // otherwise past/first occurrences silently auto-"log" and can't be
+    // managed. Everything else is a plan when its DAY is today or later.
+    //
+    // Day-based, not timestamp-based (v0.240.1). The old rule
+    // (`occ.getTime() > Date.now()`) meant scheduling something for
+    // earlier today marked it as an activity you had already done: add a
+    // to-do at 10:57 for "9:00 today" and it was born LOGGED, while its
+    // linked Task stayed `completed: false`. The thing was simultaneously
+    // finished and unfinished — it vanished from Today and Plan-this-day
+    // (not scheduled) without ticking anything off (not completed).
+    //
+    // Creating a plan is stating an intention, never recording a
+    // completion. Logging what you actually did is ActivityLogModal's job
+    // and writes LOGGED directly, so nothing here needs to guess.
+    const isPlanInstance = !!recurrenceGroupId || format(occ, "yyyy-MM-dd") >= todayLocalISODate();
+    for (const r of records) {
+      const created = await base44.entities.Activity.create({
+        timestamp: occ.toISOString(),
+        activity_name: r.activity_name,
+        activity_category_ids: r.activity_category_ids || [],
+        ...(r.color ? { color: r.color } : {}),
+        ...(r.tag_color ? { tag_color: r.tag_color } : {}),
+        task_id: effectiveLinkedTask?.id || null,
+        duration_minutes: isQuickPlan ? null : (durationMinutes > 0 ? Number(durationMinutes) : null),
+        fronting_alter_ids: alterIds,
+        notes: (notes || "").trim() || null,
+        location: (location || "").trim() || null,
+        is_planned: isPlanInstance,
+        is_quick_plan: isQuickPlan,
+        is_critical: !!isCritical,
+        critical_lead_steps: isCritical ? leadSteps : null,
+        recurrence_group_id: recurrenceGroupId,
+        recurrence_interval: recurrenceGroupId ? recurrence.interval : null,
+        assigned_alter_ids: isPlanInstance ? alterIds : [],
+        status: isPlanInstance ? ACTIVITY_STATUSES.SCHEDULED : ACTIVITY_STATUSES.LOGGED,
+        actual_duration_minutes: null,
+        reschedule_history: [],
+        reminder_offset_minutes: reminderOffset,
+        ...(authorAlterIds.length ? { author_alter_ids: authorAlterIds } : {}),
+      });
+      if (created?.id) createdIds.push(created.id);
+    }
+  }
+
+  // Keep a pre-existing linked to-do's due date in step with the plan.
+  if (linkedTask) {
+    try {
+      const dueDateStr = format(timestamp, "yyyy-MM-dd");
+      if (linkedTask.due_date !== dueDateStr) {
+        await base44.entities.Task.update(linkedTask.id, { due_date: dueDateStr });
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  return { occurrences, derivedTask, recurrenceGroupId, createdIds };
+}
