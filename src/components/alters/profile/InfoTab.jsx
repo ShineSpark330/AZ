@@ -1,3 +1,4 @@
+import { confirm } from "@/components/shared/ConfirmDialog";
 import React, { useState, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -291,6 +292,7 @@ export default function InfoTab({ alter, systemFields }) {
   };
 
   const deleteAlterField = async (idx) => {
+    if (!(await confirm({ title: "Delete this field?", body: "Its value is removed too. This can't be undone.", confirmLabel: "Delete", destructive: true }))) return;
     const updated = alterSpecificFields.filter((_, i) => i !== idx);
     await base44.entities.Alter.update(alter.id, { alter_custom_fields: updated });
     queryClient.invalidateQueries({ queryKey: ["alter", alter.id] });
@@ -327,6 +329,7 @@ export default function InfoTab({ alter, systemFields }) {
   }, [presetAnswersRaw]);
 
   const removePresetValue = async (questionKey, valueToRemove) => {
+    if (!(await confirm({ title: "Remove this answer?", body: "This can't be undone.", confirmLabel: "Remove", destructive: true }))) return;
     if (!presetAnswersRaw) return;
     const prev = typeof presetAnswersRaw[questionKey] === "string" ? presetAnswersRaw[questionKey] : "";
     const next = prev.split(/[,;|]/).map((s) => s.trim()).filter(Boolean).filter((v) => v !== valueToRemove);

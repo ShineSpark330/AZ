@@ -5,7 +5,7 @@ import {
 } from "date-fns";
 import { countableMinutes, statusFor, visualForStatus } from "@/lib/activityStatus";
 import useDayRangeDrag from "@/lib/useDayRangeDrag";
-import { dayTagColor, taggedPlansForDay, textOn, tagRank } from "@/lib/planTagColor";
+import { dayTagColor, taggedPlansForDay, textOn, tagRank, eventDotColor, dayActivityColor, softFill } from "@/lib/planTagColor";
 
 // Events without a colour of their own get a faint theme colour, the same one
 // the month view uses, so every event on a day still shows a dot.
@@ -29,7 +29,7 @@ function eventDots(list) {
   return [...(list || [])]
     .sort((x, y) => tagRank(x) - tagRank(y) || new Date(x.timestamp) - new Date(y.timestamp))
     .slice(0, MAX_DOTS)
-    .map((a) => ({ id: a.id, color: a.color || NO_COLOR_DOT, opacity: (() => { const v = visualForStatus(statusFor(a)); return v.dashed ? 1 : v.fillOpacity; })() }));
+    .map((a) => { const own = eventDotColor(a); return { id: a.id, color: own || NO_COLOR_DOT, opacity: (() => { const v = visualForStatus(statusFor(a)); return !own || v.dashed ? 1 : v.fillOpacity; })() }; });
 }
 
 function MiniMonth({ monthDate, byDay, maxMinutes, weekStartsOn, onMonthClick, onDayClick, drag }) {
@@ -67,7 +67,7 @@ function MiniMonth({ monthDate, byDay, maxMinutes, weekStartsOn, onMonthClick, o
           // tagged plan colors the box (time → daily → weekly → monthly → yearly).
           const tag = inMonth ? dayTagColor(list) : null;
           const tagNames = taggedPlansForDay(list).map((a) => a.activity_name || "Plan").join(", ");
-          const actColor = inMonth ? dominantActivityColor(list) : null;
+          const actColor = inMonth ? (dominantActivityColor(list) || dayActivityColor(list, countableMinutes)) : null;
           const dots = inMonth ? eventDots(list) : [];
           // A tagged plan wins; else a logged activity tints the day in ITS
           // colour (as in the month view); else the theme heat-map.
@@ -77,6 +77,8 @@ function MiniMonth({ monthDate, byDay, maxMinutes, weekStartsOn, onMonthClick, o
             ? (actColor
               ? `color-mix(in srgb, ${actColor} ${Math.round(18 + intensity * 47)}%, transparent)`
               : `hsl(var(--primary) / ${0.15 + intensity * 0.65})`)
+            : actColor
+            ? softFill(actColor, 40)
             : "hsl(var(--muted) / 0.4)";
           return (
             <button

@@ -7,6 +7,7 @@
 // the model they had.
 
 import React, { useState } from "react";
+import { confirm } from "@/components/shared/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ArrowUp, ArrowDown, Plus, Trash2, RotateCcw } from "lucide-react";
@@ -57,8 +58,9 @@ export default function FrontLevelsSettings() {
     [next[i], next[j]] = [next[j], next[i]];
     save({ levels: next });
   };
-  const removeLevel = (id) => {
+  const removeLevel = async (id) => {
     if (cfg.levels.length <= 2) { toast.error("Keep at least two levels"); return; }
+    if (!(await confirm({ title: "Delete this level?", body: "This can't be undone.", confirmLabel: "Delete", destructive: true }))) return;
     save({ levels: cfg.levels.filter((l) => l.id !== id) });
   };
   const addLevel = () =>

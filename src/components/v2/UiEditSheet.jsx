@@ -17,6 +17,7 @@
 // the theme preset store (which already applies on fronting via
 // alterThemeLinks).
 
+import { confirm } from "@/components/shared/ConfirmDialog";
 import React, { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
@@ -1285,6 +1286,7 @@ function PresetsSection({ v2 }) {
   };
   const deleteSavedPack = async (pk) => {
     if (!settingsRow?.id) return;
+    if (!(await confirm({ title: "Delete this saved pack?", body: "This can't be undone.", confirmLabel: "Delete", destructive: true }))) return;
     try {
       await base44.entities.SystemSettings.update(settingsRow.id, {
         ui_v2_setup_packs: savedPacks.filter((x) => x.id !== pk.id),
@@ -1449,7 +1451,8 @@ function PresetsSection({ v2 }) {
     while (userCustomPresets[copy]) copy = `${from} ${++n}`;
     saveCustomPreset(copy, JSON.parse(JSON.stringify(userCustomPresets[from])));
   };
-  const removePreset = (pname) => {
+  const removePreset = async (pname) => {
+    if (!(await confirm({ title: "Delete this preset?", body: "This can't be undone.", confirmLabel: "Delete", destructive: true }))) return;
     for (const [alterId, l] of Object.entries(alterThemeLinks || {})) {
       if (l === pname) unlinkAlterTheme(alterId);
     }

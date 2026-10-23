@@ -1,3 +1,4 @@
+import { confirm } from "@/components/shared/ConfirmDialog";
 import React, { useState, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -585,6 +586,7 @@ export default function TaskTemplateManager({ templates: propTemplates, onClose 
   };
 
   const handleDelete = async (id) => {
+    if (!(await confirm({ title: "Delete this task?", body: "This can't be undone.", confirmLabel: "Delete", destructive: true }))) return;
     await base44.entities.DailyTaskTemplate.delete(id);
     invalidate();
     toast.success("Task deleted");

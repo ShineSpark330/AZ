@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { confirm } from "@/components/shared/ConfirmDialog";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
@@ -236,6 +237,7 @@ const postMessage = async () => {
 };
 
   const deleteMessage = async (rawId) => {
+    if (!(await confirm({ title: "Delete this entry?", body: "This can't be undone.", confirmLabel: "Delete", destructive: true }))) return;
     await base44.entities.AlterMessage.delete(rawId);
     queryClient.invalidateQueries({ queryKey: ["alterMessages", alterId] });
   };

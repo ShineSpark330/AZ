@@ -1,3 +1,4 @@
+import { confirm } from "@/components/shared/ConfirmDialog";
 import React, { useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { base44 } from "@/api/base44Client";
@@ -174,6 +175,7 @@ export default function AlterImagePoolManager({ open, onClose, alterId, role }) 
   // through to delete.
   // Unlinked mode: delete the owner-tagged row entirely.
   const handleDelete = async (item) => {
+    if (!(await confirm({ title: "Remove this image?", body: "This can't be undone.", confirmLabel: "Remove", destructive: true }))) return;
     try {
       if (linkedFolder && item.folder === linkedFolder) {
         await base44.entities.ImageAsset.update(item.id, { folder: "" });

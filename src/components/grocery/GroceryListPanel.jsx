@@ -906,7 +906,7 @@ export default function GroceryListPanel({ lockedMode = false }) {
                     isFavorite={isFavorite(item.name)}
                     onToggle={() => toggle(item)}
                     onToggleFavorite={() => toggleFavorite(item.name)}
-                    onRemove={() => remove(item.id)}
+                    onRemove={async () => { if (await confirm({ title: "Remove this item permanently?", body: "This can't be undone.", confirmLabel: "Delete", destructive: true })) remove(item.id); }}
                     onRestore={() => restoreToBuy(item)}
                     showStar={typeOf(activeList) === "shopping"}
                   />
@@ -928,7 +928,7 @@ export default function GroceryListPanel({ lockedMode = false }) {
                       isFavorite={isFavorite(item.name)}
                       onToggle={() => toggle(item)}
                       onToggleFavorite={() => toggleFavorite(item.name)}
-                      onRemove={() => remove(item.id)}
+                      onRemove={async () => { if (await confirm({ title: "Remove this item permanently?", body: "This can't be undone.", confirmLabel: "Delete", destructive: true })) remove(item.id); }}
                       onRestore={() => restoreToBuy(item)}
                       showStar={typeOf(activeList) === "shopping"}
                     />
@@ -1359,6 +1359,7 @@ function NotePad({ list, canAttach, onSave }) {
     }
   };
   const removeImage = async (url) => {
+    if (!(await confirm({ title: "Remove this picture?", body: "It will be taken off the note.", confirmLabel: "Remove", destructive: true }))) return;
     setImages((cur) => {
       latest.current.images = cur.filter((u) => u !== url);
       return latest.current.images;

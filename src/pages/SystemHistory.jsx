@@ -1,3 +1,4 @@
+import { confirm } from "@/components/shared/ConfirmDialog";
 import React, { useState, useMemo, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { localEntities } from "@/api/base44Client";
@@ -345,6 +346,7 @@ export default function SystemHistory() {
   }, [events, typeFilter, showHidden]);
 
   const handleDelete = useCallback(async (eventId) => {
+    if (!(await confirm({ title: "Delete this event?", body: "This can't be undone.", confirmLabel: "Delete", destructive: true }))) return;
     await localEntities.SystemChangeEvent.delete(eventId);
     queryClient.invalidateQueries({ queryKey: ["systemChangeEvents"] });
   }, [queryClient]);

@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { confirm } from "@/components/shared/ConfirmDialog";
 import React, { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
@@ -66,6 +67,7 @@ export default function NotesTab({ alterId }) {
   };
 
   const deleteNote = async (id) => {
+    if (!(await confirm({ title: "Delete this note?", body: "This can't be undone.", confirmLabel: "Delete", destructive: true }))) return;
     await base44.entities.AlterNote.delete(id);
     queryClient.invalidateQueries({ queryKey: ["alterNotes", alterId] });
   };

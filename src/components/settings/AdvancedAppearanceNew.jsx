@@ -554,6 +554,7 @@ export default function AdvancedAppearance() {
   };
 
   const handleDeleteCustomFont = async (id) => {
+    if (!(await confirm({ title: "Delete this custom font?", body: "Anything using it falls back to the default font. This can't be undone.", confirmLabel: "Delete", destructive: true }))) return;
     try {
       const deletedFamily = customFontFamilyCss(id);
       await base44.entities.CustomFont.delete(id);

@@ -1,3 +1,4 @@
+import { confirm } from "@/components/shared/ConfirmDialog";
 import React, { useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { localEntities, base44 } from "@/api/base44Client";
@@ -240,6 +241,7 @@ export default function LineageTab({ alterId }) {
   );
 
   async function handleDelete(eventId) {
+    if (!(await confirm({ title: "Delete this event?", body: "This can't be undone.", confirmLabel: "Delete", destructive: true }))) return;
     await localEntities.SystemChangeEvent.delete(eventId);
     queryClient.invalidateQueries({ queryKey: ["systemChangeEvents"] });
   }

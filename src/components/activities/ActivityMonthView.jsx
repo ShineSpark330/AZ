@@ -6,7 +6,7 @@ import {
 import { countableMinutes, statusFor, visualForStatus } from "@/lib/activityStatus";
 import { datesForDay } from "@/lib/importantDates";
 import useDayRangeDrag from "@/lib/useDayRangeDrag";
-import { dayTagColor, taggedPlansForDay } from "@/lib/planTagColor";
+import { dayTagColor, taggedPlansForDay, eventDotColor, dayActivityColor, softFill } from "@/lib/planTagColor";
 
 // Events without a colour get this faint theme-based dot.
 const NO_COLOR_DOT = "hsl(var(--primary) / 0.4)";
@@ -82,6 +82,10 @@ export default function ActivityMonthView({
           // (time → daily → weekly → monthly → yearly).
           const tag = inMonth ? dayTagColor(list) : null;
           const tagNames = taggedPlansForDay(list).map((a) => a.activity_name || "Plan").join(", ");
+          // No colour tag → older entries still tint the day in their
+          // activity's colour, the same way a tagged day is filled.
+          const actColor = inMonth && !tag ? dayActivityColor(list, countableMinutes) : null;
+          const fillColor = tag || actColor;
 
           return (
             <button
@@ -93,7 +97,7 @@ export default function ActivityMonthView({
               className={`relative text-left border-b border-r border-border/40 p-1.5 min-h-[72px] transition-colors hover:bg-accent/40 ${inMonth ? "" : "bg-muted/20"} ${drag.inRange(d) ? "ring-2 ring-inset ring-primary/70" : ""}`}
               style={{
                 ...(intensity > 0 ? { backgroundColor: `hsl(var(--primary) / ${0.06 + intensity * 0.18})` } : null),
-                ...(tag ? { backgroundColor: `${tag}66`, boxShadow: `inset 0 0 0 1.5px ${tag}` } : null),
+                ...(fillColor ? { backgroundColor: softFill(fillColor, 40), boxShadow: `inset 0 0 0 1.5px ${fillColor}` } : null),
                 ...(drag.dragging ? { touchAction: "none" } : null),
               }}
             >
@@ -114,7 +118,10 @@ export default function ActivityMonthView({
                   const v = visualForStatus(statusFor(a));
                   // No colour of its own → a faint theme colour (same soft tint
                   // the heat-map uses), so every event still shows a dot.
-                  const baseColor = a.color || NO_COLOR_DOT;
+                  // A colour tag counts too, so a tagged plan never shows a
+                  // faded theme dot.
+                  const ownColor = eventDotColor(a);
+                  const baseColor = ownColor || NO_COLOR_DOT;
                   return (
                     <span
                       key={a.id}
@@ -124,7 +131,10 @@ export default function ActivityMonthView({
                         // Planned events are filled in too (they used to be a
                         // faint dashed ring that was hard to see).
                         backgroundColor: baseColor,
-                        opacity: v.dashed ? 1 : v.fillOpacity,
+                        // The faint fallback is already see-through, so it
+                        // isn't faded a second time.
+                        opacity: !ownColor || v.dashed ? 1 : v.fillOpacity,
+                        boxShadow: "0 0 0 1px hsl(var(--background) / 0.7)",
                       }}
                       title={a.activity_name}
                     />

@@ -426,6 +426,7 @@ useEffect(() => {
   // delete so users can prune the inferred soup that landed on
   // their profiles without their explicit intent.
   const removeTag = async (tagToRemove) => {
+    if (!(await confirm({ title: "Remove this tag?", body: "This can't be undone.", confirmLabel: "Remove", destructive: true }))) return;
     const existing = Array.isArray(alter.tags) ? alter.tags : [];
     const next = existing.filter((t) => t !== tagToRemove);
     if (next.length === existing.length) return;
@@ -474,6 +475,7 @@ useEffect(() => {
   })();
 
   const removePresetValue = async (questionKey, valueToRemove) => {
+    if (!(await confirm({ title: "Remove this answer?", body: "This can't be undone.", confirmLabel: "Remove", destructive: true }))) return;
     if (!presetAnswersRaw) return;
     const prev = typeof presetAnswersRaw[questionKey] === "string" ? presetAnswersRaw[questionKey] : "";
     const next = prev.split(/[,;|]/).map((s) => s.trim()).filter(Boolean).filter((v) => v !== valueToRemove);

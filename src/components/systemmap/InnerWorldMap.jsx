@@ -741,7 +741,7 @@ export default function InnerWorldMap({ alters: allAlters, relationships, onRefr
                 onLongPress={() => { if (viewOnly) { setViewingLocation(loc); } else { setSelectedLocation(loc); setEditingLocation(loc); } }}
                 onEdit={() => { if (!viewOnly) { setSelectedLocation(loc); setEditingLocation(loc); } }}
                 onUpdate={(fields) => { if (!viewOnly) updateLocation(loc, fields); }}
-                onDelete={() => deleteLocation(loc)}
+                onDelete={async () => { if (await confirm("Delete this location?")) deleteLocation(loc); }}
               />
             ))}
 

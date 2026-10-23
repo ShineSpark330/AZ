@@ -1,3 +1,4 @@
+import { confirm } from "@/components/shared/ConfirmDialog";
 import React, { useState, useEffect, useRef } from "react";
 import AlterSearchSelect from "@/components/shared/AlterSearchSelect";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -247,6 +248,7 @@ export default function PrivateMessagesTab({ alterId, alters, highlightMessageId
   };
 
   const handleDelete = async (messageId) => {
+    if (!(await confirm({ title: "Delete this message?", body: "This can't be undone.", confirmLabel: "Delete", destructive: true }))) return;
     await base44.entities.AlterMessage.delete(messageId);
     queryClient.invalidateQueries({ queryKey: ["privateMessages", alterId] });
     queryClient.invalidateQueries({ queryKey: ["allPrivateMessages"] });
