@@ -101,13 +101,25 @@ public class SystemSettingsPlugin extends Plugin {
         if (am == null) return false;
         try {
             if (am.isMusicActive()) return true;
-            if (am.isStreamActive(AudioManager.STREAM_ALARM)) return true;
-            if (am.isStreamActive(AudioManager.STREAM_RING)) return true;
-            if (am.isStreamActive(AudioManager.STREAM_VOICE_CALL)) return true;
             int mode = am.getMode();
-            return mode == AudioManager.MODE_IN_CALL
+            if (mode == AudioManager.MODE_IN_CALL
                 || mode == AudioManager.MODE_RINGTONE
-                || mode == AudioManager.MODE_IN_COMMUNICATION;
+                || mode == AudioManager.MODE_IN_COMMUNICATION) return true;
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                java.util.List<android.media.AudioPlaybackConfiguration> configs = am.getActivePlaybackConfigurations();
+                if (configs != null) {
+                    for (android.media.AudioPlaybackConfiguration c : configs) {
+                        android.media.AudioAttributes attrs = c.getAudioAttributes();
+                        if (attrs == null) continue;
+                        int usage = attrs.getUsage();
+                        if (usage == android.media.AudioAttributes.USAGE_ALARM
+                            || usage == android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE
+                            || usage == android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION
+                            || usage == android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING) return true;
+                    }
+                }
+            }
+            return false;
         } catch (Exception e) {
             return false;
         }
