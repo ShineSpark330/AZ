@@ -9,9 +9,23 @@
 // (`subscribeIdle`) so its "play when there's no sound playing" option can
 // start it once the other audio / video stops, pauses or ends.
 
-import { isOtherAudioPlaying, waitForOtherAudioQuiet } from "@/lib/otherAudio";
+import { isOtherAudioPlaying, waitForOtherAudioQuiet, setMediaKeepAlive } from "@/lib/otherAudio";
+import { isNative } from "@/lib/platform";
 
-const playing = new Set();
+// Whenever something starts or stops sounding, keep the phone from ending the
+// app while it plays. A short delay on stopping stops it flapping between tracks.
+let keepAliveTimer = null;
+const syncKeepAlive = () => {
+  if (keepAliveTimer) { clearTimeout(keepAliveTimer); keepAliveTimer = null; }
+  if (playing.size) { setMediaKeepAlive(true); return; }
+  keepAliveTimer = setTimeout(() => { keepAliveTimer = null; if (!playing.size) setMediaKeepAlive(false); }, 4000);
+};
+class PlayingSet extends Set {
+  add(v) { const r = super.add(v); syncKeepAlive(); return r; }
+  delete(v) { const r = super.delete(v); syncKeepAlive(); return r; }
+  clear() { super.clear(); syncKeepAlive(); }
+}
+const playing = new PlayingSet();
 const all = new Set();
 const idleListeners = new Set();
 
@@ -64,34 +78,112 @@ const resumeInterrupted = () => {
 };
 
 // A video carries on as sound when the app is left (Home, Recents), the way a
-// song does. Android's web view stops a <video> the moment the app is no longer
-// on screen, but keeps an <audio> going — so while we're away the video's own
-// sound plays from a hidden <audio> on the same file, from the same spot, and
-// the video picks it up again (same spot, playing) when you come back. With
-// "Play inside the app only" on, none of this happens — everything just stops.
-const handoffs = new Map(); // video element -> { audio, unreg }
+// song does. Android's web view stops a <video> as soon as the app is off
+// screen — and also anything playing a file that has a picture in it, even
+// through an <audio> tag. So the video's own sound is decoded once and played
+// through Web Audio (which the phone keeps running in the background), from the
+// same spot; the video picks it up again (same spot, playing) when you come
+// back. A very long video, which would be too big to hold decoded, falls back
+// to a hidden <audio> on the same file. With "Play inside the app only" on,
+// none of this happens — everything just stops.
+const handoffs = new Map(); // video element -> entry
+const MAX_DECODED_BYTES = 100e6; // ~4 minutes of stereo sound held in memory
 
-function startHandoff(el) {
-  const src = el.currentSrc || el.src;
-  if (!src || handoffs.has(el)) return;
-  const t = el.currentTime;
+const onNative = () => { try { return isNative(); } catch { return false; } };
+
+function makeToken(el) {
+  // Stands in for the video in `playing`, so a song set to start when nothing
+  // is playing doesn't jump in, and another sound starting takes over.
+  const token = { tagName: "AUDIO", paused: false, ended: false, isConnected: true };
+  token.pause = () => { ourPause.delete(token); stopHandoff(el, false); };
+  return token;
+}
+
+function videoPos(el, entry) {
+  const rate = el.playbackRate || 1;
+  let pos = el.currentTime;
+  if (el.paused && entry.pausedAt != null) pos += ((performance.now() - entry.pausedAt) / 1000) * rate;
+  return pos;
+}
+
+// The video itself stops, now that its sound is carried by the stand-in.
+function quietVideo(el, entry) {
+  if (!el.paused) { ourPause.add(el); try { el.pause(); } catch { /* already gone */ } }
+  if (entry.pausedAt == null) entry.pausedAt = performance.now();
+}
+
+async function startWebAudio(el, entry, src) {
+  const Ctx = typeof window !== "undefined" && (window.AudioContext || window.webkitAudioContext);
+  const dur = el.duration;
+  if (!Ctx || !(dur > 0) || dur * 48000 * 8 > MAX_DECODED_BYTES) throw new Error("too big or unsupported");
+  const ctx = new Ctx();
+  entry.ctx = ctx;
+  try { await ctx.resume(); } catch { /* checked below */ }
+  const bytes = await (await fetch(src)).arrayBuffer();
+  if (entry.cancelled) return;
+  const buf = await ctx.decodeAudioData(bytes);
+  if (entry.cancelled) return;
+  if (ctx.state !== "running") { try { await ctx.resume(); } catch { /* checked below */ } }
+  if (ctx.state !== "running") throw new Error("audio context blocked");
+  const gain = ctx.createGain();
+  gain.gain.value = el.muted ? 0 : el.volume;
+  gain.connect(ctx.destination);
+  const node = ctx.createBufferSource();
+  node.buffer = buf;
+  node.loop = el.loop;
+  node.playbackRate.value = el.playbackRate || 1;
+  node.connect(gain);
+  const rate = node.playbackRate.value;
+  const pos = Math.max(0, Math.min(videoPos(el, entry), buf.duration - 0.05));
+  node.onended = () => { entry.ended = true; };
+  const startedAt = ctx.currentTime;
+  node.start(0, pos);
+  entry.mode = "webaudio";
+  entry.node = node;
+  entry.where = () => {
+    const t = pos + (ctx.currentTime - startedAt) * rate;
+    return entry.ended ? buf.duration : (buf.duration > 0 && el.loop ? t % buf.duration : Math.min(t, buf.duration));
+  };
+  entry.length = buf.duration;
+  quietVideo(el, entry);
+}
+
+function startAudioClone(el, entry, src) {
   const a = new Audio();
   a.preload = "auto";
   a.src = src;
   try { a.volume = el.volume; a.muted = el.muted; a.loop = el.loop; a.playbackRate = el.playbackRate; } catch { /* keep defaults */ }
-  const unreg = registerMedia(a);
-  const entry = { audio: a, unreg };
-  handoffs.set(el, entry);
-  // Count the stand-in as playing right away so a song waiting for quiet
-  // doesn't sneak in while it loads.
-  playing.add(a);
-  if (!el.paused) { ourPause.add(el); try { el.pause(); } catch { /* already gone */ } }
+  entry.mode = "clone";
+  entry.audio = a;
+  const t = videoPos(el, entry);
   const start = () => {
+    if (entry.cancelled) return;
     try { if (Number.isFinite(t) && t > 0) a.currentTime = t; } catch { /* not seekable yet */ }
-    a.play().catch(() => { stopHandoff(el, false); });
+    a.play().then(() => { if (!entry.cancelled) quietVideo(el, entry); }).catch(() => { stopHandoff(el, false); });
   };
   if (a.readyState >= 1) start(); else a.addEventListener("loadedmetadata", start, { once: true });
   a.addEventListener("error", () => stopHandoff(el, false), { once: true });
+  entry.where = () => (a.ended ? (Number.isFinite(el.duration) ? el.duration : a.currentTime) : a.currentTime);
+  entry.isGoing = () => !a.paused && !a.ended;
+}
+
+function startHandoff(el) {
+  if (handoffs.has(el)) return;
+  const src = el.currentSrc || el.src;
+  if (!src) return;
+  const entry = { token: makeToken(el), cancelled: false, ended: false, pausedAt: el.paused ? performance.now() : null };
+  entry.onPause = () => { if (entry.pausedAt == null) entry.pausedAt = performance.now(); };
+  el.addEventListener("pause", entry.onPause);
+  handoffs.set(el, entry);
+  // Count the stand-in as playing from the start, so a song waiting for quiet
+  // doesn't slip in while it gets ready.
+  playing.add(entry.token);
+  startWebAudio(el, entry, src).catch(() => {
+    if (entry.cancelled || handoffs.get(el) !== entry) return;
+    try { entry.ctx && entry.ctx.close(); } catch { /* already closed */ }
+    entry.ctx = null;
+    startAudioClone(el, entry, src);
+  });
 }
 
 // Ends the stand-in. `resume` puts the video back where the sound got to and
@@ -100,20 +192,32 @@ function stopHandoff(el, resume) {
   const entry = handoffs.get(el);
   if (!entry) return;
   handoffs.delete(el);
-  const { audio, unreg } = entry;
-  const t = audio.currentTime;
-  const wasPlaying = !audio.paused && !audio.ended;
-  const ended = audio.ended;
-  playing.delete(audio);
-  ourPause.add(audio);
-  try { audio.pause(); } catch { /* already gone */ }
-  unreg();
-  ourPause.delete(audio);
-  try { audio.removeAttribute("src"); audio.load(); } catch { /* already gone */ }
-  if (!resume || !all.has(el) || !el.isConnected) return;
+  entry.cancelled = true;
+  let pos = null;
+  let wasPlaying = false;
   try {
-    if (ended && Number.isFinite(el.duration)) el.currentTime = el.duration;
-    else if (Number.isFinite(t) && t > 0) el.currentTime = t;
+    if (entry.where) {
+      pos = entry.where();
+      wasPlaying = entry.mode === "webaudio" ? !entry.ended || el.loop : !!(entry.isGoing && entry.isGoing());
+    } else if (el.paused && entry.pausedAt != null) {
+      // The stand-in never got going before we came back: the phone stopped the
+      // video, so carry on from where it would have been.
+      pos = videoPos(el, entry);
+      wasPlaying = true;
+    }
+  } catch { /* nothing to carry back */ }
+  try { entry.node && entry.node.stop(); } catch { /* already stopped */ }
+  try { entry.ctx && entry.ctx.close(); } catch { /* already closed */ }
+  if (entry.audio) {
+    try { entry.audio.pause(); entry.audio.removeAttribute("src"); entry.audio.load(); } catch { /* already gone */ }
+  }
+  el.removeEventListener("pause", entry.onPause);
+  playing.delete(entry.token);
+  ourPause.delete(entry.token);
+  if (!resume || !all.has(el) || !el.isConnected) { notifyIdleIfQuiet(); return; }
+  try {
+    if (!wasPlaying && entry.ended && Number.isFinite(el.duration)) el.currentTime = el.duration;
+    else if (Number.isFinite(pos) && pos > 0) el.currentTime = pos;
   } catch { /* not seekable yet */ }
   if (wasPlaying && !blocked) el.play().catch(() => {});
 }
@@ -160,7 +264,10 @@ export function registerMedia(el, { exclusive = true } = {}) {
     if (ourPause.delete(el) || el.ended || !el.isConnected) return;
     if (Date.now() - lastTouchAt < 1000) return; // the person paused it
     // The phone stopped a video because the app is off screen: keep its sound.
-    if (el.tagName === "VIDEO" && !blocked && !handoffs.has(el) && typeof document !== "undefined" && document.visibilityState === "hidden") {
+    // (Recents leaves the page "visible" but without focus, so check both.)
+    if (el.tagName === "VIDEO" && handoffs.has(el)) return;
+    if (el.tagName === "VIDEO" && !blocked && typeof document !== "undefined"
+      && (document.visibilityState === "hidden" || (onNative() && !document.hasFocus()))) {
       startHandoff(el);
       return;
     }

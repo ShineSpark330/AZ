@@ -43,11 +43,13 @@ function goAway() {
 }
 
 function comeBack() {
+  // A video can be carried as sound without us having flagged "away" (the phone
+  // stopped it on its own), so always give it its picture back.
+  if (document.visibilityState === "visible") handBackVideos();
   if (!away) return;
   away = false;
   const wasOn = isPlayInsideOnly();
   setPlaybackBlocked(false);
-  handBackVideos();
   if (wasOn) resumeIdleSongs();
 }
 
@@ -58,6 +60,7 @@ export function initPlayInsideOnly() {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") goAway(); else comeBack();
   });
+  window.addEventListener("focus", () => { if (document.visibilityState === "visible") handBackVideos(); });
   window.addEventListener("pagehide", goAway);
   window.addEventListener("pageshow", comeBack);
 

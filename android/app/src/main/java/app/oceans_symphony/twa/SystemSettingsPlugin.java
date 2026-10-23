@@ -92,6 +92,34 @@ public class SystemSettingsPlugin extends Plugin {
     }
 
     /**
+     * While sound is playing, run a quiet foreground service so Android doesn't
+     * end the app (and the sound) when memory is low. Never throws: if the phone
+     * won't allow it right now, the sound just plays as it always did.
+     */
+    @PluginMethod
+    public void startMediaKeepAlive(PluginCall call) {
+        try {
+            Context ctx = getContext();
+            Intent i = new Intent(ctx, MediaKeepAliveService.class);
+            if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i); else ctx.startService(i);
+        } catch (Exception e) {
+            // not allowed right now — carry on without it
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void stopMediaKeepAlive(PluginCall call) {
+        try {
+            Context ctx = getContext();
+            ctx.stopService(new Intent(ctx, MediaKeepAliveService.class));
+        } catch (Exception e) {
+            // already stopped
+        }
+        call.resolve();
+    }
+
+    /**
      * Music or video playing in another app, OR an alarm, a ringtone or a call.
      * isMusicActive() alone only sees the music stream, so an alarm going off
      * paused the song (the phone takes the audio focus) and nothing ever noticed

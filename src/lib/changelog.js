@@ -22,9 +22,10 @@ export const CHANGELOG = [
     changes: [
       { type: "feature", text: "Accessibility: new \"Play inside the app only\" option. When it's on, songs, audio and videos stop as soon as you leave the app (Home or Recents) instead of carrying on in the background, and nothing starts on its own while you're away. Off by default." },
       { type: "improve", text: "Tempo & pitch: unlinked tempo and pitch now use a proper pitch shifter instead of the phone's built-in speed-change, so they sound much less robotic." },
-      { type: "fix", text: "Videos now keep playing like audio when you leave the app (Recents or Home): their sound carries on, and the picture picks up from the same spot when you come back. Turn on \"Play inside the app only\" to have them stop instead." },
+      { type: "fix", text: "Videos now keep playing like audio when you leave the app (Recents or Home): the phone stops the picture, but the sound carries on from the same spot — not covered by a song starting over it — and the video picks up again when you come back. Turn on \"Play inside the app only\" to have them stop instead." },
       { type: "fix", text: "Song and audio now carry on after an alarm, a ringtone or a call ends — before, only other apps' music was noticed — and they come back about a second after the other sound stops instead of two." },
       { type: "fix", text: "Song widget: changing the volume or having the song's file re-read no longer cuts the sound off and sends it back to 0:00 — it carries on from the same spot." },
+      { type: "fix", text: "Songs, audio and videos no longer get cut off in the background when the phone is low on memory: while sound is playing, the app now shows a quiet \"Playing\" notification so Android leaves it running." },
       { type: "improve", text: "Playback responds faster: a paused song or video checks and resumes sooner after another sound stops." },
     ],
   },

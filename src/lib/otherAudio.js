@@ -51,3 +51,17 @@ export function waitForOtherAudioQuiet() {
   });
   return quietWatch;
 }
+
+// While sound is playing, ask Android to keep the app alive with a quiet
+// foreground service (see MediaKeepAliveService.java), so low memory doesn't
+// end the app — and the sound — in the background. Android only; harmless
+// elsewhere and on an older native build without the method.
+let keepAliveOn = false;
+export function setMediaKeepAlive(on) {
+  if (!SystemSettings || keepAliveOn === on) return;
+  keepAliveOn = on;
+  try {
+    const p = on ? SystemSettings.startMediaKeepAlive() : SystemSettings.stopMediaKeepAlive();
+    if (p && p.catch) p.catch(() => {});
+  } catch { /* older native build */ }
+}
