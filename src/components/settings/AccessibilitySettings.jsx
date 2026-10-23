@@ -8,6 +8,7 @@ import {
   setAccessibilityFontSize,
   setAccessibilityLargeTouch,
   setAccessibilityNavHeight,
+  setAccessibilityPlayInsideOnly,
 } from "@/lib/useAccessibility";
 import {
   isGroundingButtonEnabled,
@@ -181,6 +182,17 @@ export default function AccessibilitySettings() {
               setGroundingButtonEnabled(v);
               setGroundingBubble(v);
             }}
+          />
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div className="min-w-0 pr-3">
+            <p className="text-sm font-semibold">Play inside the app only</p>
+            <p className="text-xs text-muted-foreground">Songs, audio and videos stop as soon as you leave the app (Home or Recents), instead of carrying on in the background like a music player. Nothing starts on its own while you're away. Off by default.</p>
+          </div>
+          <Switch
+            checked={!!settings.playInsideOnly}
+            onCheckedChange={v => update("playInsideOnly", v, setAccessibilityPlayInsideOnly)}
           />
         </div>
       </div>

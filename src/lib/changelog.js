@@ -20,6 +20,11 @@ export const CHANGELOG = [
   {
     date: "October 23, 2026",
     changes: [
+      { type: "feature", text: "Accessibility: new \"Play inside the app only\" option. When it's on, songs, audio and videos stop as soon as you leave the app (Home or Recents) instead of carrying on in the background, and nothing starts on its own while you're away. Off by default." },
+      { type: "fix", text: "Planner: every Edit now opens the full Plan Activity form instead of the old cut-down sheet. Plans get Outcome (Start now, Done, Partly, Skipped, Cancelled, Reschedule) at the top; logged activities get the same form without Outcome, reminder or critical. Delete is at the bottom." },
+      { type: "improve", text: "Songs set to \"Automatic. Play when no music is playing.\" now also wait for other apps (Facebook, the Gallery, music players) to go quiet — even when this app is in the background — and start or carry on once they stop." },
+      { type: "improve", text: "Chat, bulletin and Assets videos and audio now carry on from the same spot when another app (Facebook, the Gallery, a music player) has finished and stopped the sound they were paused by." },
+      { type: "improve", text: "Tempo & pitch: unlinked tempo and pitch now use a proper pitch shifter instead of the phone's built-in speed-change, so they sound much less robotic." },
       { type: "fix", text: "Plan color tag: the Use and Save buttons next to the hex box no longer squeeze into a tall, one-letter-per-line column." },
       { type: "improve", text: "Every delete now asks you to confirm first: saved colors, profile notes and Board entries, private messages, lineage and history events, fronting levels, tasks, custom fonts, UI presets and saved packs, image-pool images, grocery items and note pictures, map locations, custom profile fields, tags and answers." },
       { type: "fix", text: "Month and year calendars: a plan with a color tag now shows its dot in that color instead of a faded dot." },
@@ -28,11 +33,8 @@ export const CHANGELOG = [
       { type: "improve", text: "Editing a plan now opens the same form as Plan Activity — end date, \"No specific time\", activity search, color tag, reminder and more — with Outcome at the top." },
       { type: "improve", text: "The edit sheet with the Outcome buttons is now only for logged activities, which no longer show Outcome." },
       { type: "hotfix", text: "Editing a repeating plan won't accept an end date longer than the time before it repeats." },
-      { type: "fix", text: "Chat, bulletin and Assets players: if you leave one playing and another app (Facebook, Gallery…) starts its own sound, yours now waits and picks back up once that app is quiet, instead of fighting it for the audio." },
-      { type: "fix", text: "Song widget: it now waits for other apps too. When Facebook, Gallery or any other app plays sound, the song stays paused and only picks back up once it's quiet. Before, it restarted a moment after the other app took over and paused the video you were watching." },
       { type: "fix", text: "Song widget: it no longer shows \"paused\" at 0:00 while the song is actually playing (the widget and the app-wide song were waiting on each other), the buttons now follow what the sound is really doing, and the first tap anywhere starts a song the phone wouldn't autoplay." },
       { type: "fix", text: "Chat, bulletin and Assets players: the timer and bar no longer freeze after you drag the seek bar while the sound keeps going, and play / pause always follow the real state." },
-      { type: "fix", text: "Pitch without tempo: the pitch shifter could add up louder than the original and clip, which sounded harsh and robotic on loud tracks. It now stays at the original level and asks the phone for bigger audio buffers." },
       { type: "fix", text: "Relationships & Locations: wide rows now scroll sideways so nothing is cut off." },
       { type: "improve", text: "Songs no longer show a pop-up player anywhere — they just play in the background. The Song widget keeps its own controls." },
       { type: "improve", text: "Year calendar: tapping a day now opens that month instead of the day." },

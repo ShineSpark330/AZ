@@ -9,6 +9,8 @@ import android.content.Intent;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.provider.Settings;
 
@@ -87,6 +89,57 @@ public class SystemSettingsPlugin extends Plugin {
         JSObject r = new JSObject();
         r.put("playing", am != null && am.isMusicActive());
         call.resolve(r);
+    }
+
+    // ── Waiting for other apps' audio to stop ───────────────────────────
+    // The "Automatic. Play when no music is playing." song uses this to
+    // start (or carry on) once another app — Facebook, the Gallery, a music
+    // player — has gone quiet, including while this app is in the
+    // background. It only LOOKS: it never asks for audio focus itself (a
+    // second request from this app would knock the web view's own off).
+    // Fires "otherAudioQuiet" after the phone reports no music for ~2 s,
+    // so the gap between two tracks doesn't count as quiet.
+    private Handler quietHandler;
+    private Runnable quietPoll;
+    private int quietCount = 0;
+
+    private void stopQuietWatch() {
+        if (quietHandler != null && quietPoll != null) quietHandler.removeCallbacks(quietPoll);
+        quietPoll = null;
+    }
+
+    @PluginMethod
+    public void watchOtherAudio(PluginCall call) {
+        stopQuietWatch();
+        quietCount = 0;
+        if (quietHandler == null) quietHandler = new Handler(Looper.getMainLooper());
+        quietPoll = new Runnable() {
+            @Override
+            public void run() {
+                AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+                if (am != null && am.isMusicActive()) quietCount = 0; else quietCount++;
+                if (quietCount >= 3) {
+                    quietPoll = null;
+                    notifyListeners("otherAudioQuiet", new JSObject());
+                } else {
+                    quietHandler.postDelayed(this, 700);
+                }
+            }
+        };
+        quietHandler.postDelayed(quietPoll, 700);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void stopWatchingOtherAudio(PluginCall call) {
+        stopQuietWatch();
+        call.resolve();
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        stopQuietWatch();
+        super.handleOnDestroy();
     }
 
     @PluginMethod

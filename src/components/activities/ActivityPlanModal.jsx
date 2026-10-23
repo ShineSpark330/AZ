@@ -20,7 +20,8 @@ import { parseSignpostAuthors } from "@/lib/signpostAuthors";
 import { Plus, MapPin, Zap, Repeat, Bell, UserPlus, X } from "lucide-react";
 import { LEAD_STEPS, DEFAULT_LEAD_STEPS } from "@/lib/criticalPins";
 import { useTerms } from "@/lib/useTerms";
-import { ACTIVITY_STATUSES } from "@/lib/activityStatus";
+import { ACTIVITY_STATUSES, statusFor } from "@/lib/activityStatus";
+import PlanOutcomeSection from "@/components/planner/PlanOutcomeSection";
 import {
   PLAN_REMINDER_OFFSETS,
   readPlanRemindersEnabled,
@@ -109,6 +110,12 @@ export default function ActivityPlanModal({
   // into the full form doesn't mean retyping what you already wrote.
   initialTitle = "",
   initialNotes = "",
+  // Edit mode only: opens the Outcome row with its "when?" chooser already
+  // showing ("later" = Reschedule).
+  outcomeAsk = null,
+  // Edit mode only: when given, a Delete button appears in the footer and
+  // the host owns the confirmation (series plans ask how far it reaches).
+  onDelete = null,
 }) {
   const terms = useTerms();
   const queryClient = useQueryClient();
@@ -260,8 +267,13 @@ export default function ActivityPlanModal({
       hydratedFor.current = editingPlan.id;
       titleTouched.current = false;
       const ts = new Date(editingPlan.timestamp);
-      const endTs = editingPlan.duration_minutes
-        ? new Date(ts.getTime() + editingPlan.duration_minutes * 60_000)
+      // A logged entry's real length can live in actual_duration_minutes
+      // (it's what the planner shows), so the form must start from that.
+      const editMins = statusFor(editingPlan) === ACTIVITY_STATUSES.LOGGED
+        ? (Number(editingPlan.actual_duration_minutes) || Number(editingPlan.duration_minutes) || 0)
+        : editingPlan.duration_minutes;
+      const endTs = editMins
+        ? new Date(ts.getTime() + editMins * 60_000)
         : null;
       setDatePicked(format(ts, "yyyy-MM-dd"));
       setEndDatePicked(format(endTs || ts, "yyyy-MM-dd"));
@@ -490,8 +502,11 @@ export default function ActivityPlanModal({
           notes: finalNotes || null,
           author_alter_ids: prepared.authorIds,
           location: location.trim() || null,
-          is_planned: isPlanned,
+          is_planned: isLoggedEdit ? false : isPlanned,
           is_quick_plan: isQuickPlan,
+          ...(isLoggedEdit && Number(editingPlan.actual_duration_minutes)
+            ? { actual_duration_minutes: durationMinutes > 0 ? durationMinutes : null }
+            : {}),
           is_critical: !!isCritical,
           critical_lead_steps: isCritical ? leadSteps : null,
           assigned_alter_ids: isPlanned ? selectedAlters : [],
@@ -654,6 +669,10 @@ export default function ActivityPlanModal({
   // Visible badge when editing a recurring plan so the user can see
   // which branch their save will apply to. Pure visual confirmation —
   // the choice was already made in RecurrenceBranchDialog.
+  // Editing something that already happened (not a plan): same form, but no
+  // Outcome, reminder or critical options — those only mean something for a
+  // plan.
+  const isLoggedEdit = !!editingPlan && statusFor(editingPlan) === ACTIVITY_STATUSES.LOGGED;
   const branchBadge = (editingPlan?.recurrence_group_id && editBranch) ? (
     <div className="text-[11px] text-primary bg-primary/10 border border-primary/30 rounded-md px-2 py-1.5">
       Editing <strong>{BRANCH_LABELS[editBranch]}</strong> in this recurring series.
@@ -664,11 +683,18 @@ export default function ActivityPlanModal({
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{editingPlan ? "Edit Plan" : "Plan Activity"}</DialogTitle>
+          <DialogTitle>{editingPlan ? (isLoggedEdit ? "Edit Activity" : "Edit Plan") : "Plan Activity"}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-5">
           {branchBadge}
+
+          {/* ── OUTCOME first when editing: the form is about a plan that
+                 already exists, so "what became of it" is the headline.
+                 Logged activities have no outcome to give. */}
+          {editingPlan && statusFor(editingPlan) !== ACTIVITY_STATUSES.LOGGED && (
+            <PlanOutcomeSection item={editingPlan} onClose={onClose} initialAsk={outcomeAsk} />
+          )}
 
           {/* ── Title first (calendar-app convention) — borderless, large,
                  so the modal opens on "what is this plan" not on plumbing. */}
@@ -976,6 +1002,7 @@ export default function ActivityPlanModal({
 
           {/* ── OPTIONS — repeat / reminder / critical as flat rows in one
                  container (was: three separately-boxed cards). */}
+          {!isLoggedEdit && (
           <section className="space-y-2.5">
             <h3 className="text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground">Options</h3>
             <div className="rounded-xl border border-border/50 divide-y divide-border/40">
@@ -1119,11 +1146,16 @@ export default function ActivityPlanModal({
           </div>
             </div>
           </section>
+          )}
 
           <div className="flex gap-2 justify-end pt-1 border-t border-border/40">
+            {editingPlan && onDelete && (
+              <Button variant="ghost" className="mr-auto text-destructive hover:text-destructive"
+                onClick={() => onDelete(editingPlan)}>Delete</Button>
+            )}
             <Button variant="outline" onClick={onClose}>Cancel</Button>
             <Button onClick={handleSave} disabled={isLoading}>
-              {isLoading ? "Saving..." : "Save Plan"}
+              {isLoading ? "Saving..." : (isLoggedEdit ? "Save" : "Save Plan")}
             </Button>
           </div>
 

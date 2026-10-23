@@ -55,6 +55,8 @@ import PlanTimeChoice from "@/components/planner/PlanTimeChoice";
 import PlanColorTagPicker from "@/components/activities/PlanColorTagPicker";
 import { normalizeHex } from "@/lib/planTagColor";
 import { Switch } from "@/components/ui/switch";
+import ActivityPlanModal from "@/components/activities/ActivityPlanModal";
+import { ACTIVITY_STATUSES, statusFor } from "@/lib/activityStatus";
 import { ActivityActionMenu } from "@/components/activities/CurrentActivities";
 // The tracker's overview calendars and panels, merged into the planner.
 import ActivityMonthView from "@/components/activities/ActivityMonthView";
@@ -385,6 +387,10 @@ export default function PlannerSurface({
   // ActivityActionMenu the dashboard pill opens (edit start, pause,
   // end & log, discard). Reuse, don't fork.
   const [liveMenu, setLiveMenu] = useState(null);
+  // Editing a PLAN opens the same Plan Activity form that created it (with
+  // the Outcome row on top) instead of this surface's own cut-down sheet.
+  // { item, branch, ask } — branch = series reach, ask = open a "when?" row.
+  const [planEdit, setPlanEdit] = useState(null);
 
   const openCreate = (day, fromMin, toMin) => {
     const pad = (n) => String(n).padStart(2, "0");
@@ -419,7 +425,15 @@ export default function PlannerSurface({
   };
   // Opening the EDITOR for an existing entry — one seeding path for every
   // caller (details sheet, plans list, untimed strip).
-  const openEditor = (item, { day = null, series = false } = {}) => {
+  const openEditor = (item, { day = null, series = false, ask = null } = {}) => {
+    // EVERY edit — plan or logged — opens the full form (Plan Activity's
+    // edit mode; Outcome shows for plans only). The old cut-down sheet below
+    // is no longer reached from here.
+    setDetails(null);
+    setTiming(null);
+    setPlanEdit({ item, branch: series ? RECURRENCE_BRANCHES.THIS_AND_FUTURE : null, ask });
+    return;
+    // eslint-disable-next-line no-unreachable
     const start = item.timestamp ? new Date(item.timestamp) : null;
     setDetails(null);
     setTiming({
@@ -680,6 +694,9 @@ export default function PlannerSurface({
   // require opening the editor first. Reschedule hands off to the editor,
   // where the day picker lives, and opens it.
   const rescheduleFromDetails = (item) => {
+    openEditor(item, { ask: "later" });
+    return;
+    // eslint-disable-next-line no-unreachable
     openEditor(item);
     setTimeout(() => {
       const el = dayInputRef.current;
@@ -827,9 +844,11 @@ export default function PlannerSurface({
     saveField(patch);
   };
 
-  const deleteEntry = async () => {
-    if (!timing) return;
-    const item = timing.item;
+  const deleteEntry = async (itemArg = null) => {
+    // Called with a plan from the Plan Activity form's Delete button, or with
+    // a click event from this surface's own sheet (then it's the open entry).
+    const item = itemArg?.id ? itemArg : timing?.item;
+    if (!item) return;
     // A series member: deleting must ask how far it reaches (rule 14) —
     // one occurrence, this-and-future, or the whole series.
     if (item.recurrence_group_id) {
@@ -1382,7 +1401,7 @@ export default function PlannerSurface({
                 a footnote under a wall of categories.
                 A plan that didn't happen must be sayable —
                 otherwise it either nags forever or quietly counts as done. */}
-            {!timing.create && (
+            {!timing.create && statusFor(timing.item) !== ACTIVITY_STATUSES.LOGGED && (
             <div>
               <p className="text-xs text-muted-foreground mb-1">{tr("planner.outcome")}</p>
               <div className="flex flex-wrap gap-1">
@@ -1927,6 +1946,22 @@ export default function PlannerSurface({
           </div>
         </div>
       ), document.body)}
+
+      {/* Edit a plan: the Plan Activity form, Outcome on top. */}
+      {planEdit && (
+        <ActivityPlanModal
+          isOpen
+          onClose={() => setPlanEdit(null)}
+          onSave={() => setPlanEdit(null)}
+          editingPlan={planEdit.item}
+          editBranch={planEdit.branch}
+          allActivities={activities}
+          alters={alters}
+          frontingHistory={frontingHistory}
+          outcomeAsk={planEdit.ask}
+          onDelete={(it) => { setPlanEdit(null); deleteEntry(it); }}
+        />
+      )}
 
       {/* Series delete: how far does it reach? Rendered on its own (never
           stacked over the entry sheet's controls) and portaled like every
