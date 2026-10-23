@@ -44,6 +44,12 @@ export default function ProfileSongPlayer({ alter, song: songProp, inline = fals
   const resolved = useResolvedAvatarUrl(song?.ref || null);
 
   const audioRef = useRef(null);
+  // Where the song was (and whether it was going) when its <audio> was last
+  // rebuilt, so a rebuild — a changed setting, the file's address being
+  // re-resolved — picks up in the same spot instead of dropping out and
+  // starting over from 0:00.
+  const carryRef = useRef(null);
+  const volRef = useRef(null);
   // A song on a page (widget, profile, background) tells the app-wide song to
   // step aside while it's on screen. The app-wide copy itself doesn't.
   const hasRef = !!song?.ref;
@@ -84,14 +90,18 @@ export default function ProfileSongPlayer({ alter, song: songProp, inline = fals
 
   useEffect(() => {
     if (!enabled || !song?.ref || !resolved) return undefined;
-    const el = new Audio(resolved);
+    const el = new Audio();
+    el.preload = "auto";
+    el.src = resolved;
     el.loop = looping;
-    el.volume = volume / 100;
+    el.volume = (volRef.current ?? volume) / 100;
     audioRef.current = el;
     let cancelled = false;
-    setTime(0); setDur(0);
-    if (keepPlace) {
-      const resumeAt = takeSongTime(song.ref);
+    const carried = carryRef.current && carryRef.current.ref === song.ref ? carryRef.current : null;
+    carryRef.current = null;
+    setTime(carried ? carried.t : 0); setDur(0);
+    if (carried || keepPlace) {
+      const resumeAt = carried ? carried.t : takeSongTime(song.ref);
       if (resumeAt > 0) {
         el.addEventListener("loadedmetadata", () => {
           try { if (Number.isFinite(el.duration) && resumeAt < el.duration - 1) el.currentTime = resumeAt; } catch { /* not seekable yet */ }
@@ -124,7 +134,10 @@ export default function ProfileSongPlayer({ alter, song: songProp, inline = fals
     // shows the same play control the blocked case does, without trying.
     // Someone's music is already playing: starting would stop it (Android
     // hands the audio to whoever played last), so wait for a tap.
-    if (!autoplay) {
+    if (carried?.playing) {
+      // It was sounding when it was rebuilt — carry straight on, no waiting.
+      el.play().then(() => { if (!cancelled) setState("playing"); }).catch(() => { if (!cancelled) setState(el.error ? "error" : "blocked"); });
+    } else if (!autoplay) {
       setState("paused");
     } else if (playWhenIdle && isOtherPlaying(el)) {
       // Something else is already playing — wait for quiet instead of talking over it.
@@ -155,11 +168,19 @@ export default function ProfileSongPlayer({ alter, song: songProp, inline = fals
       el.removeEventListener("loadedmetadata", onDur);
       el.removeEventListener("error", onError);
       if (keepPlace) saveSongTime(song.ref, el.currentTime);
+      carryRef.current = el.error ? null : { ref: song.ref, t: el.currentTime, playing: !el.paused && !el.ended && !userPaused.current };
       el.pause();
       el.src = "";
       audioRef.current = null;
     };
-  }, [enabled, song?.ref, resolved, volume, autoplay, playWhenIdle, keepPlace, loadNonce]);
+    // Volume is NOT a dependency: changing it must never rebuild the song
+    // (that cut the sound off and sent it back to 0:00). It's applied live below.
+  }, [enabled, song?.ref, resolved, autoplay, playWhenIdle, keepPlace, loadNonce]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    volRef.current = volume;
+    if (audioRef.current) audioRef.current.volume = volume / 100;
+  }, [volume]);
 
   useEffect(() => { if (audioRef.current) audioRef.current.loop = looping; }, [looping]);
 
@@ -207,6 +228,7 @@ export default function ProfileSongPlayer({ alter, song: songProp, inline = fals
   };
   const changeVolume = (v) => {
     setLiveVolume(v);
+    volRef.current = v;
     if (audioRef.current) audioRef.current.volume = v / 100;
   };
 

@@ -87,8 +87,30 @@ public class SystemSettingsPlugin extends Plugin {
     public void otherAudioPlaying(PluginCall call) {
         AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
         JSObject r = new JSObject();
-        r.put("playing", am != null && am.isMusicActive());
+        r.put("playing", soundActive(am));
         call.resolve(r);
+    }
+
+    /**
+     * Music or video playing in another app, OR an alarm, a ringtone or a call.
+     * isMusicActive() alone only sees the music stream, so an alarm going off
+     * paused the song (the phone takes the audio focus) and nothing ever noticed
+     * to carry it on afterwards.
+     */
+    private boolean soundActive(AudioManager am) {
+        if (am == null) return false;
+        try {
+            if (am.isMusicActive()) return true;
+            if (am.isStreamActive(AudioManager.STREAM_ALARM)) return true;
+            if (am.isStreamActive(AudioManager.STREAM_RING)) return true;
+            if (am.isStreamActive(AudioManager.STREAM_VOICE_CALL)) return true;
+            int mode = am.getMode();
+            return mode == AudioManager.MODE_IN_CALL
+                || mode == AudioManager.MODE_RINGTONE
+                || mode == AudioManager.MODE_IN_COMMUNICATION;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     // ── Waiting for other apps' audio to stop ───────────────────────────
@@ -97,8 +119,9 @@ public class SystemSettingsPlugin extends Plugin {
     // player — has gone quiet, including while this app is in the
     // background. It only LOOKS: it never asks for audio focus itself (a
     // second request from this app would knock the web view's own off).
-    // Fires "otherAudioQuiet" after the phone reports no music for ~2 s,
-    // so the gap between two tracks doesn't count as quiet.
+    // Fires "otherAudioQuiet" after the phone reports no sound for ~1 s,
+    // so the gap between two tracks doesn't count as quiet (it used to wait
+    // about 2 s, which made a song feel slow to come back).
     private Handler quietHandler;
     private Runnable quietPoll;
     private int quietCount = 0;
@@ -117,16 +140,16 @@ public class SystemSettingsPlugin extends Plugin {
             @Override
             public void run() {
                 AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
-                if (am != null && am.isMusicActive()) quietCount = 0; else quietCount++;
-                if (quietCount >= 3) {
+                if (soundActive(am)) quietCount = 0; else quietCount++;
+                if (quietCount >= 4) {
                     quietPoll = null;
                     notifyListeners("otherAudioQuiet", new JSObject());
                 } else {
-                    quietHandler.postDelayed(this, 700);
+                    quietHandler.postDelayed(this, 250);
                 }
             }
         };
-        quietHandler.postDelayed(quietPoll, 700);
+        quietHandler.postDelayed(quietPoll, 250);
         call.resolve();
     }
 

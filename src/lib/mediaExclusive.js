@@ -36,7 +36,7 @@ const notifyIdleIfQuiet = () => {
       if (busy) { waitForOtherAudioQuiet().then(notifyIdleIfQuiet); return; }
       for (const fn of [...idleListeners]) { try { fn(); } catch { /* listener failed */ } }
     });
-  }, 250);
+  }, 120);
 };
 
 // Chat, bulletin and Assets players: when another app (Facebook, the Gallery, a
@@ -62,6 +62,74 @@ const resumeInterrupted = () => {
     if (all.has(el) && el.paused && !el.ended) { el.play().catch(() => {}); break; }
   }
 };
+
+// A video carries on as sound when the app is left (Home, Recents), the way a
+// song does. Android's web view stops a <video> the moment the app is no longer
+// on screen, but keeps an <audio> going — so while we're away the video's own
+// sound plays from a hidden <audio> on the same file, from the same spot, and
+// the video picks it up again (same spot, playing) when you come back. With
+// "Play inside the app only" on, none of this happens — everything just stops.
+const handoffs = new Map(); // video element -> { audio, unreg }
+
+function startHandoff(el) {
+  const src = el.currentSrc || el.src;
+  if (!src || handoffs.has(el)) return;
+  const t = el.currentTime;
+  const a = new Audio();
+  a.preload = "auto";
+  a.src = src;
+  try { a.volume = el.volume; a.muted = el.muted; a.loop = el.loop; a.playbackRate = el.playbackRate; } catch { /* keep defaults */ }
+  const unreg = registerMedia(a);
+  const entry = { audio: a, unreg };
+  handoffs.set(el, entry);
+  // Count the stand-in as playing right away so a song waiting for quiet
+  // doesn't sneak in while it loads.
+  playing.add(a);
+  if (!el.paused) { ourPause.add(el); try { el.pause(); } catch { /* already gone */ } }
+  const start = () => {
+    try { if (Number.isFinite(t) && t > 0) a.currentTime = t; } catch { /* not seekable yet */ }
+    a.play().catch(() => { stopHandoff(el, false); });
+  };
+  if (a.readyState >= 1) start(); else a.addEventListener("loadedmetadata", start, { once: true });
+  a.addEventListener("error", () => stopHandoff(el, false), { once: true });
+}
+
+// Ends the stand-in. `resume` puts the video back where the sound got to and
+// plays it again if the sound was still going.
+function stopHandoff(el, resume) {
+  const entry = handoffs.get(el);
+  if (!entry) return;
+  handoffs.delete(el);
+  const { audio, unreg } = entry;
+  const t = audio.currentTime;
+  const wasPlaying = !audio.paused && !audio.ended;
+  const ended = audio.ended;
+  playing.delete(audio);
+  ourPause.add(audio);
+  try { audio.pause(); } catch { /* already gone */ }
+  unreg();
+  ourPause.delete(audio);
+  try { audio.removeAttribute("src"); audio.load(); } catch { /* already gone */ }
+  if (!resume || !all.has(el) || !el.isConnected) return;
+  try {
+    if (ended && Number.isFinite(el.duration)) el.currentTime = el.duration;
+    else if (Number.isFinite(t) && t > 0) el.currentTime = t;
+  } catch { /* not seekable yet */ }
+  if (wasPlaying && !blocked) el.play().catch(() => {});
+}
+
+// The app was left and sound may carry on: hand every playing video to audio.
+export function handOffVideosToAudio() {
+  if (blocked) return;
+  for (const el of [...playing]) {
+    if (el.tagName === "VIDEO") startHandoff(el);
+  }
+}
+
+// Back in the app: give every video its picture back.
+export function handBackVideos() {
+  for (const el of [...handoffs.keys()]) stopHandoff(el, true);
+}
 
 // Pause every registered player that is sounding right now. These pauses are
 // ours, so the "another app took the sound — carry on later" logic ignores them.
@@ -91,6 +159,11 @@ export function registerMedia(el, { exclusive = true } = {}) {
   const onPauseEv = () => {
     if (ourPause.delete(el) || el.ended || !el.isConnected) return;
     if (Date.now() - lastTouchAt < 1000) return; // the person paused it
+    // The phone stopped a video because the app is off screen: keep its sound.
+    if (el.tagName === "VIDEO" && !blocked && !handoffs.has(el) && typeof document !== "undefined" && document.visibilityState === "hidden") {
+      startHandoff(el);
+      return;
+    }
     setTimeout(() => {
       if (!all.has(el) || !el.paused || el.ended || playing.size) return;
       isOtherAudioPlaying().then((busy) => {
@@ -98,7 +171,7 @@ export function registerMedia(el, { exclusive = true } = {}) {
         interrupted.add(el);
         if (!resuming) { resuming = true; waitForOtherAudioQuiet().then(resumeInterrupted); }
       });
-    }, 300);
+    }, 150);
   };
   const onStop = () => { playing.delete(el); notifyIdleIfQuiet(); };
   el.addEventListener("play", onPlay);
@@ -115,6 +188,7 @@ export function registerMedia(el, { exclusive = true } = {}) {
     el.removeEventListener("ended", onStop);
     all.delete(el);
     interrupted.delete(el);
+    if (handoffs.has(el)) stopHandoff(el, false);
     if (playing.delete(el)) notifyIdleIfQuiet();
   };
 }

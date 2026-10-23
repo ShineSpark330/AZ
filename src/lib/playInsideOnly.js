@@ -15,7 +15,7 @@
 
 import { isNative } from "@/lib/platform";
 import { isPlayInsideOnly } from "@/lib/useAccessibility";
-import { pauseAllMedia, setPlaybackBlocked, resumeIdleSongs } from "@/lib/mediaExclusive";
+import { pauseAllMedia, setPlaybackBlocked, resumeIdleSongs, handOffVideosToAudio, handBackVideos } from "@/lib/mediaExclusive";
 
 let away = false;
 let started = false;
@@ -37,6 +37,9 @@ function goAway() {
   away = true;
   sync();
   if (isPlayInsideOnly()) pauseEverything();
+  // Option off: a video carries on as sound, like a song (the phone's web view
+  // stops video the moment the app is off screen, but not audio).
+  else if (isNative()) handOffVideosToAudio();
 }
 
 function comeBack() {
@@ -44,6 +47,7 @@ function comeBack() {
   away = false;
   const wasOn = isPlayInsideOnly();
   setPlaybackBlocked(false);
+  handBackVideos();
   if (wasOn) resumeIdleSongs();
 }
 

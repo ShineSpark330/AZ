@@ -18,13 +18,23 @@
 
 export const CHANGELOG = [
   {
-    date: "October 23, 2026",
+    date: "October 24, 2026",
     changes: [
       { type: "feature", text: "Accessibility: new \"Play inside the app only\" option. When it's on, songs, audio and videos stop as soon as you leave the app (Home or Recents) instead of carrying on in the background, and nothing starts on its own while you're away. Off by default." },
+      { type: "improve", text: "Tempo & pitch: unlinked tempo and pitch now use a proper pitch shifter instead of the phone's built-in speed-change, so they sound much less robotic." },
+      { type: "fix", text: "Videos now keep playing like audio when you leave the app (Recents or Home): their sound carries on, and the picture picks up from the same spot when you come back. Turn on \"Play inside the app only\" to have them stop instead." },
+      { type: "fix", text: "Song and audio now carry on after an alarm, a ringtone or a call ends — before, only other apps' music was noticed — and they come back about a second after the other sound stops instead of two." },
+      { type: "fix", text: "Song widget: changing the volume or having the song's file re-read no longer cuts the sound off and sends it back to 0:00 — it carries on from the same spot." },
+      { type: "improve", text: "Playback responds faster: a paused song or video checks and resumes sooner after another sound stops." },
+    ],
+  },
+  {
+    date: "October 23, 2026",
+    version: "0.271.3",
+    changes: [
       { type: "fix", text: "Planner: every Edit now opens the full Plan Activity form instead of the old cut-down sheet. Plans get Outcome (Start now, Done, Partly, Skipped, Cancelled, Reschedule) at the top; logged activities get the same form without Outcome, reminder or critical. Delete is at the bottom." },
       { type: "improve", text: "Songs set to \"Automatic. Play when no music is playing.\" now also wait for other apps (Facebook, the Gallery, music players) to go quiet — even when this app is in the background — and start or carry on once they stop." },
       { type: "improve", text: "Chat, bulletin and Assets videos and audio now carry on from the same spot when another app (Facebook, the Gallery, a music player) has finished and stopped the sound they were paused by." },
-      { type: "improve", text: "Tempo & pitch: unlinked tempo and pitch now use a proper pitch shifter instead of the phone's built-in speed-change, so they sound much less robotic." },
       { type: "fix", text: "Plan color tag: the Use and Save buttons next to the hex box no longer squeeze into a tall, one-letter-per-line column." },
       { type: "improve", text: "Every delete now asks you to confirm first: saved colors, profile notes and Board entries, private messages, lineage and history events, fronting levels, tasks, custom fonts, UI presets and saved packs, image-pool images, grocery items and note pictures, map locations, custom profile fields, tags and answers." },
       { type: "fix", text: "Month and year calendars: a plan with a color tag now shows its dot in that color instead of a faded dot." },
