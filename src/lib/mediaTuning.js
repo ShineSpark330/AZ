@@ -231,6 +231,10 @@ export function useMediaTuning(mediaRef, resetKey) {
     if (!el) return undefined;
     const apply = () => {
       const cur = el;
+      // Published on the element so that, when the app is left and a video's
+      // sound carries on through Web Audio (mediaExclusive.js), it plays with
+      // the same tempo and pitch.
+      cur.__tuning = { tempo, semitones, linked };
       if (Math.abs(cur.playbackRate - tempo) > 0.001) cur.playbackRate = tempo;
       if (linked) {
         setPreservesPitch(cur, false);      // speed and pitch move together
@@ -245,14 +249,14 @@ export function useMediaTuning(mediaRef, resetKey) {
       if (!engineRef.current && needsShift) {
         try { engineRef.current = makeEngine(cur, rebind); } catch { setPitchSupported(false); return; }
       }
-      if (engineRef.current?.workletReady) {
-        // Speed comes from playbackRate (raising the pitch with it); the worklet
-        // brings the pitch to exactly what was asked: pitch ÷ tempo.
-        setPreservesPitch(cur, false);
-        engineRef.current.setRatio(ratio / tempo);
-      } else {
-        engineRef.current?.setRatio(ratio);
-      }
+      // Tempo is the player's own speed change with the pitch KEPT (the phone's
+      // pitch correction); the shifter then moves the pitch to exactly what
+      // was asked. This used to switch the pitch correction OFF and divide the
+      // shifter's ratio by the tempo — which only works if the phone really
+      // honours that switch. When it doesn't, the pitch came out lower by the
+      // whole tempo ratio ("unlinked pitch gets lower"). Keeping the pitch is
+      // right either way.
+      engineRef.current?.setRatio(ratio);
     };
     apply();
     // The element resets its rate when a new source loads.

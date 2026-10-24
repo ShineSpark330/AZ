@@ -131,9 +131,31 @@ async function startWebAudio(el, entry, src) {
   const node = ctx.createBufferSource();
   node.buffer = buf;
   node.loop = el.loop;
-  node.playbackRate.value = el.playbackRate || 1;
-  node.connect(gain);
-  const rate = node.playbackRate.value;
+  // Same tempo and pitch the person set on the video (see mediaTuning.js).
+  // Playing a buffer faster raises its pitch with it, so when pitch is set on
+  // its own the pitch shifter puts the pitch back to exactly what was asked.
+  const tempo = el.playbackRate || 1;
+  node.playbackRate.value = tempo;
+  const tune = el.__tuning || { semitones: 0, linked: false };
+  let tail = node;
+  // Unlinked (the usual case, and the player's own speed menu): the pitch is
+  // kept at what was asked, so undo the pitch change the faster/slower buffer brings.
+  if (!tune.linked && (Math.abs(tune.semitones) > 0.001 || Math.abs(tempo - 1) > 0.001) && ctx.audioWorklet && typeof AudioWorkletNode !== "undefined") {
+    try {
+      await ctx.audioWorklet.addModule("/pitch-shifter-worklet.js");
+      if (entry.cancelled) return;
+      const shifter = new AudioWorkletNode(ctx, "pitch-shifter", {
+        numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+        channelCount: 2, channelCountMode: "explicit",
+      });
+      shifter.parameters.get("ratio").value = Math.pow(2, tune.semitones / 12) / tempo;
+      node.connect(shifter);
+      tail = shifter;
+      entry.shifter = shifter;
+    } catch { /* no shifter: tempo only */ }
+  }
+  tail.connect(gain);
+  const rate = tempo;
   const pos = Math.max(0, Math.min(videoPos(el, entry), buf.duration - 0.05));
   node.onended = () => { entry.ended = true; };
   const startedAt = ctx.currentTime;
@@ -153,6 +175,37 @@ function startAudioClone(el, entry, src) {
   a.preload = "auto";
   a.src = src;
   try { a.volume = el.volume; a.muted = el.muted; a.loop = el.loop; a.playbackRate = el.playbackRate; } catch { /* keep defaults */ }
+  // Same tempo and pitch the person set (see mediaTuning.js). Unlinked: the
+  // phone keeps the pitch while changing the speed, and the pitch shifter moves
+  // the pitch to what was asked. Linked: speed and pitch move together.
+  const tune = el.__tuning || { semitones: 0, linked: false };
+  const setKeep = (on) => { try { a.preservesPitch = on; a.webkitPreservesPitch = on; } catch { /* not supported */ } };
+  setKeep(!tune.linked);
+  const Ctx = typeof window !== "undefined" && (window.AudioContext || window.webkitAudioContext);
+  if (!tune.linked && Math.abs(tune.semitones) > 0.001 && Ctx) {
+    try {
+      const ctx = new Ctx();
+      entry.ctx = ctx;
+      const source = ctx.createMediaElementSource(a); // routes the sound through the shifter
+      const ratio = Math.pow(2, tune.semitones / 12);
+      const toOut = (last) => last.connect(ctx.destination);
+      if (ctx.audioWorklet && typeof AudioWorkletNode !== "undefined") {
+        ctx.audioWorklet.addModule("/pitch-shifter-worklet.js").then(() => {
+          if (entry.cancelled) return;
+          const shifter = new AudioWorkletNode(ctx, "pitch-shifter", {
+            numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+            channelCount: 2, channelCountMode: "explicit",
+          });
+          shifter.parameters.get("ratio").value = ratio;
+          source.connect(shifter);
+          toOut(shifter);
+        }).catch(() => toOut(source));
+      } else {
+        toOut(source);
+      }
+      ctx.resume().catch(() => {});
+    } catch { /* plain playback — tempo only */ }
+  }
   entry.mode = "clone";
   entry.audio = a;
   const t = videoPos(el, entry);
