@@ -20,6 +20,7 @@ class WsolaShifter {
   constructor(sampleRate, channels) {
     const k = sampleRate / 48000;
     this.channels = channels;
+    this.sr = sampleRate;
     this.N = Math.max(256, Math.round((1536 * k) / 2) * 2); // grain length
     this.Hs = this.N / 2;                                    // synthesis hop (50% overlap)
     this.D = Math.max(32, Math.round(384 * k));               // search reach either side
@@ -37,6 +38,12 @@ class WsolaShifter {
     this.finalized = 0;    // y samples that are complete (no more overlap to add)
     this.r = this.Hs;      // read position in y
     this.started = false;
+    // Loudness matching. Overlapping grains that don't line up exactly (noise,
+    // breath, drums, most real music) add up to LESS than their parts — about
+    // 1–2 dB quieter than the original. This tracks how loud the input and the
+    // output are and brings the output back up to the input's level, slowly
+    // enough that it never pumps. It only ever turns the sound UP (to +9 dB).
+    this.eIn = 0; this.eOut = 0; this.gain = 1;
   }
 
   // Score how well x[cand..] continues from the template, over `len` samples.
@@ -101,6 +108,9 @@ class WsolaShifter {
       this.mono[(this.inPos + i) & xm] = sum / this.channels;
     }
     this.inPos += n;
+    let pIn = 0;
+    for (let i = 0; i < n; i++) { const v = this.mono[(this.inPos - n + i) & xm]; pIn += v * v; }
+    pIn /= n;
     while (this._grain(s)) { /* lay down every grain the input now allows */ }
 
     const ym = this.YL - 1;
@@ -119,6 +129,38 @@ class WsolaShifter {
         outChans[c][i] = b + 0.5 * f * (cc - a + f * (2 * a - 5 * b + 4 * cc - d + f * (3 * (b - cc) + d - a)));
       }
       this.r += s;
+    }
+    this._level(outChans, n, pIn);
+  }
+
+  // Bring the output block up to the input's loudness (see the constructor).
+  _level(outChans, n, pIn) {
+    const sr = this.sr, blockT = n / sr;
+    let pOut = 0;
+    for (let i = 0; i < n; i++) { const v = outChans[0][i]; pOut += v * v; }
+    pOut /= n;
+    if (this.started) {
+      const a = 1 - Math.exp(-blockT / 0.6);              // ~0.6 s averaging
+      this.eIn += (pIn - this.eIn) * a;
+      this.eOut += (pOut - this.eOut) * a;
+    }
+    let target = 1;
+    if (this.eOut > 1e-9 && this.eIn > 1e-9) target = Math.min(2.8, Math.max(1, Math.sqrt(this.eIn / this.eOut)));
+    // Rise slowly, fall quickly, so a loud passage is never pushed over.
+    const k = target > this.gain ? 1 - Math.exp(-blockT / 0.5) : 1 - Math.exp(-blockT / 0.08);
+    const g0 = this.gain;
+    this.gain += (target - this.gain) * k;
+    const g1 = this.gain;
+    if (g0 === 1 && g1 === 1) return;
+    for (let c = 0; c < outChans.length; c++) {
+      const o = outChans[c];
+      for (let i = 0; i < n; i++) {
+        let v = o[i] * (g0 + ((g1 - g0) * (i + 1)) / n);
+        // Keep the boost from ever clipping: bend anything near full scale.
+        const a = Math.abs(v);
+        if (a > 0.9) v = Math.sign(v) * (0.9 + 0.1 * Math.tanh((a - 0.9) / 0.1));
+        o[i] = v;
+      }
     }
   }
 }

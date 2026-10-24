@@ -20,6 +20,7 @@ export const CHANGELOG = [
   {
     date: "October 24, 2026",
     changes: [
+      { type: "fix", text: "Tempo & pitch: with tempo and pitch unlinked, the sound is no longer quieter than when they're linked — the pitch shifter now matches the original loudness, and a tempo change gets a small lift." },
       { type: "feature", text: "Accessibility: new \"Play inside the app only\" option. When it's on, songs, audio and videos stop as soon as you leave the app (Home or Recents) instead of carrying on in the background, and nothing starts on its own while you're away. Off by default." },
       { type: "improve", text: "Tempo & pitch: unlinked tempo and pitch now use a proper pitch shifter instead of the phone's built-in speed-change, so they sound much less robotic." },
       { type: "fix", text: "Tempo & pitch: with tempo and pitch unlinked, speeding a video or audio up no longer drags the pitch lower — the pitch now stays exactly where you set it whatever the tempo." },

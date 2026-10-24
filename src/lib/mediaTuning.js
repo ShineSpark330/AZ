@@ -123,6 +123,23 @@ function makeShifter(ctx) {
 // One engine per media element: element → (dry | shifter) → speakers.
 const WORKLET_URL = "/pitch-shifter-worklet.js";
 
+// The phone's own tempo change (pitch kept) comes out quieter than a plain
+// speed change on most real music — the overlapped slices it joins add up to
+// less than the original, about 1–2 dB on noisy or busy sound. Nothing in the
+// page can see the original level, so this is a fixed make-up (+2 dB) while
+// that tempo change is on. The pitch shifter measures and matches its own level.
+const STRETCH_MAKEUP = 1.26;
+
+// Bends anything near full scale so the make-up can't clip.
+function makeLimiterCurve() {
+  const n = 1024, c = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1, a = Math.abs(x);
+    c[i] = a <= 0.9 ? x : Math.sign(x) * (0.9 + 0.1 * Math.tanh((a - 0.9) / 0.1));
+  }
+  return c;
+}
+
 function makeEngine(el, onReady) {
   const Ctor = typeof window !== "undefined" ? (window.AudioContext || window.webkitAudioContext) : null;
   if (!Ctor) throw new Error("Web Audio isn't available");
@@ -132,11 +149,16 @@ function makeEngine(el, onReady) {
   const wet = ctx.createGain();
   wet.gain.value = 0;
   const shifter = makeShifter(ctx);
+  const makeup = ctx.createGain();
+  const limiter = ctx.createWaveShaper();
+  limiter.curve = makeLimiterCurve();
   source.connect(dry);
-  dry.connect(ctx.destination);
+  dry.connect(makeup);
   source.connect(shifter.input);
   shifter.output.connect(wet);
-  wet.connect(ctx.destination);
+  wet.connect(makeup);
+  makeup.connect(limiter);
+  limiter.connect(ctx.destination);
 
   // Once an element is routed through a context it is silent while that
   // context is suspended — wake it whenever playback starts.
@@ -151,6 +173,8 @@ function makeEngine(el, onReady) {
   const engine = {
     el,
     get workletReady() { return !!node; },
+    // Level lift for the phone's own tempo change (see STRETCH_MAKEUP).
+    setMakeup(gain) { makeup.gain.setTargetAtTime(gain, ctx.currentTime, 0.05); },
     setRatio(ratio) {
       lastRatio = ratio;
       const shifted = Math.abs(ratio - 1) > 0.001;
@@ -239,6 +263,7 @@ export function useMediaTuning(mediaRef, resetKey) {
       if (linked) {
         setPreservesPitch(cur, false);      // speed and pitch move together
         engineRef.current?.setRatio(1);
+        engineRef.current?.setMakeup(1);
         return;
       }
       setPreservesPitch(cur, true);         // fallback: the browser keeps the pitch for tempo alone
@@ -257,6 +282,7 @@ export function useMediaTuning(mediaRef, resetKey) {
       // whole tempo ratio ("unlinked pitch gets lower"). Keeping the pitch is
       // right either way.
       engineRef.current?.setRatio(ratio);
+      engineRef.current?.setMakeup(Math.abs(tempo - 1) > 0.001 ? STRETCH_MAKEUP : 1);
     };
     apply();
     // The element resets its rate when a new source loads.
