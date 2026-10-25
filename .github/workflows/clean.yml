@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type DELETE to remove everything except .github and os.7z'
+        description: 'Type DELETE to remove everything except .github'
         required: true
         default: ''
 
@@ -19,40 +19,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check os.7z is here first
-        run: |
-          echo "Files at the top of the repo:"
-          ls -la
-          if [ ! -f os.7z ]; then
-            echo "::error::os.7z not found at the repo root on this branch - nothing deleted."
-            exit 1
-          fi
-
-      - name: Delete everything except .github and os.7z
+      - name: Delete everything except .github
         run: |
           # Enable extended pattern matching in bash
           shopt -s extglob
           
           echo "Deleting files..."
-          # Remove everything at root except .github, .git, and os.7z
-          rm -rf !(.|..|.git|.github|os.7z)
+          # Remove everything at root except .github and git configuration files
+          rm -rf !(.|..|.git|.github)
           
           echo "Remaining files:"
           ls -la
-          
-          if [ ! -f os.7z ]; then
-            echo "::error::os.7z was accidentally deleted during the process!"
-            exit 1
-          fi
 
       - name: Commit and push
         run: |
           git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@://github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           if git diff --cached --quiet; then
             echo "Nothing to delete."
           else
-            git commit -m "Delete all files except .github and os.7z"
+            git commit -m "Delete all files except .github"
             git push
           fi
