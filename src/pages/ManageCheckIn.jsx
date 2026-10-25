@@ -1,0 +1,445 @@
+import React, { useState, useMemo } from "react";
+import { confirm } from "@/components/shared/ConfirmDialog";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { base44 } from "@/api/base44Client";
+import { motion } from "framer-motion";
+import { Plus, Pencil, Trash2, ChevronLeft, Check, X, ChevronUp, ChevronDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
+import DiaryTemplateManager from "@/components/settings/DiaryTemplateManager";
+import BundlePicker from "@/components/symptoms/BundlePicker";
+import { isContextItem } from "@/lib/trackingModel";
+import ColorPickerModal from "@/components/shared/ColorPickerModal";
+import { Switch } from "@/components/ui/switch";
+import { QUICK_CHECKIN_SECTIONS, enabledCheckinSectionIds } from "@/lib/quickCheckinSections";
+import LegacyCatalogueMigrationCard from "@/components/settings/LegacyCatalogueMigrationCard";
+import { SymptomDuplicatesCard } from "@/components/symptoms/SymptomDuplicatesModal";
+import CustomEmotionsManager from "@/components/settings/CustomEmotionsManager";
+import { useFrontLevels, frontLevelLabel } from "@/lib/frontLevels";
+import { useTerms } from "@/lib/useTerms";
+import { pickPrimarySystemSettings } from "@/lib/systemSettingsSingleton";
+import { EMOTION_ATTRIBUTION_ALL, emotionAttributionDefault } from "@/lib/emotionAttribution";
+import { readQuickCheckinSliderEnabled, writeQuickCheckinSliderEnabled } from "@/lib/quickCheckinPrefs";
+
+// Toggle which section pills appear in the Quick Check-In modal.
+function SectionsTab() {
+  const qc = useQueryClient();
+  const { data: list = [] } = useQuery({ queryKey: ["systemSettings"], queryFn: () => base44.entities.SystemSettings.list() });
+  const settings = list?.[0] || null;
+  const enabled = enabledCheckinSectionIds(settings);
+  const [saving, setSaving] = useState(false);
+
+  const toggle = async (id) => {
+    if (saving) return;
+    const set = new Set(enabled);
+    if (set.has(id)) {
+      if (set.size <= 1) { toast.error("Keep at least one section on"); return; }
+      set.delete(id);
+    } else {
+      set.add(id);
+    }
+    const next = QUICK_CHECKIN_SECTIONS.map((s) => s.id).filter((x) => set.has(x));
+    setSaving(true);
+    try {
+      if (settings?.id) await base44.entities.SystemSettings.update(settings.id, { quick_checkin_sections: next });
+      else await base44.entities.SystemSettings.create({ quick_checkin_sections: next });
+      qc.invalidateQueries({ queryKey: ["systemSettings"] });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">
+        Choose which sections show in Quick Check-In. Turn off the ones you don't use to keep it tidy — Feeling stays available if you turn everything else off.
+      </p>
+      <div className="space-y-2">
+        {QUICK_CHECKIN_SECTIONS.map((s) => (
+          <label key={s.id} className="flex items-center justify-between gap-3 bg-card border border-border/50 rounded-xl px-4 py-3 cursor-pointer">
+            <span className="text-sm font-medium">{s.label}</span>
+            <Switch checked={enabled.includes(s.id)} onCheckedChange={() => toggle(s.id)} />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Feelings: who emotions belong to by default, the side rating, and the
+// emotion catalogue itself (the same editor as Settings → Emotions).
+function FeelingsTab() {
+  const qc = useQueryClient();
+  const t = useTerms();
+  const levelCfg = useFrontLevels();
+  const { data: list = [] } = useQuery({ queryKey: ["systemSettings"], queryFn: () => base44.entities.SystemSettings.list() });
+  const settings = pickPrimarySystemSettings(list) || list?.[0] || null;
+  const current = emotionAttributionDefault(settings, levelCfg);
+  const [saving, setSaving] = useState(false);
+  const [sliderOn, setSliderOn] = useState(() => readQuickCheckinSliderEnabled());
+
+  const choose = async (value) => {
+    if (saving || value === current) return;
+    setSaving(true);
+    try {
+      if (settings?.id) await base44.entities.SystemSettings.update(settings.id, { emotion_attribution_default: value });
+      else await base44.entities.SystemSettings.create({ emotion_attribution_default: value });
+      qc.invalidateQueries({ queryKey: ["systemSettings"] });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const options = [
+    { id: EMOTION_ATTRIBUTION_ALL, label: `All ${t.fronters}` },
+    ...levelCfg.levels.map((l) => {
+      const name = frontLevelLabel(l, t);
+      return { id: l.id, label: `Only ${name.charAt(0).toLowerCase()}${name.slice(1)}` };
+    }),
+  ];
+
+  return (
+    <div className="space-y-5">
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold">Emotions belong to</h2>
+        <p className="text-xs text-muted-foreground">
+          Hold an emotion in Quick Check-In to choose exactly which {t.alters} feel it.
+        </p>
+        <div role="radiogroup" aria-label="Emotions belong to" className="bg-card border border-border/50 rounded-xl divide-y divide-border/40">
+          {options.map((o) => (
+            <button key={o.id} type="button" role="radio" aria-checked={current === o.id} disabled={saving}
+              onClick={() => choose(o.id)}
+              className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm">
+              <span className={`w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${current === o.id ? "border-primary" : "border-muted-foreground/40"}`}>
+                {current === o.id && <span className="w-2 h-2 rounded-full bg-primary" />}
+              </span>
+              <span className="flex-1">{o.label}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <label className="flex items-center justify-between gap-3 bg-card border border-border/50 rounded-xl px-4 py-3 cursor-pointer">
+        <span className="text-sm font-medium">Side rating beside Feeling</span>
+        <Switch checked={sliderOn} onCheckedChange={(on) => { writeQuickCheckinSliderEnabled(on); setSliderOn(on); }} />
+      </label>
+
+      <CustomEmotionsManager />
+    </div>
+  );
+}
+
+function SymptomRow({ symptom, onSave, onDelete, onMoveUp, onMoveDown, index, total }) {
+  const [editing, setEditing] = useState(false);
+  const [label, setLabel] = useState(symptom.label);
+  const [type, setType] = useState(symptom.type || "boolean");
+  const [color, setColor] = useState(symptom.color || "#8b5cf6");
+  const [isPositive, setIsPositive] = useState(symptom.is_positive || false);
+  const [showColorPicker, setShowColorPicker] = useState(false);
+
+  const handleSave = async () => {
+    await onSave(symptom.id, { label, type, color, is_positive: isPositive });
+    setEditing(false);
+  };
+
+  return (
+    <div className="bg-card border border-border/50 rounded-xl overflow-hidden">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <div className="flex flex-col gap-0.5">
+          <button onClick={onMoveUp} disabled={index === 0}
+            className="p-0.5 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors">
+            <ChevronUp className="w-3 h-3" />
+          </button>
+          <button onClick={onMoveDown} disabled={index === total - 1}
+            className="p-0.5 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors">
+            <ChevronDown className="w-3 h-3" />
+          </button>
+        </div>
+        <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: symptom.color || "#8b5cf6" }} />
+        <span className="flex-1 text-sm font-medium">{symptom.label}</span>
+        <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground capitalize">{symptom.type || "boolean"}</span>
+        <button onClick={() => setEditing(v => !v)}
+          className="p-1.5 rounded-lg hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors">
+          <Pencil className="w-3.5 h-3.5" />
+        </button>
+        <button onClick={() => onDelete(symptom.id)}
+          className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors">
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      {editing && (
+        <div className="px-4 pb-4 pt-1 border-t border-border/30 space-y-3">
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Label</label>
+            <Input value={label} onChange={e => setLabel(e.target.value)} className="h-8 text-sm" />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Type</label>
+            <div className="flex gap-2">
+              {["boolean", "rating"].map(t => (
+                <button key={t} onClick={() => setType(t)}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all capitalize ${type === t ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 border-border text-muted-foreground hover:border-primary/50"}`}>
+                  {t === "boolean" ? "Yes/No" : "Rating (0–5)"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Color</label>
+              <button
+                type="button"
+                onClick={() => setShowColorPicker(true)}
+                className="w-8 h-8 rounded-lg border-2 border-border hover:border-primary/50 transition-colors shadow-sm"
+                style={{ backgroundColor: color }}
+                title="Pick color"
+              />
+              {showColorPicker && (
+                <ColorPickerModal color={color} onSave={c => setColor(c)} onClose={() => setShowColorPicker(false)} />
+              )}
+            </div>
+          </div>
+          {type === "rating" && (
+            <button
+              type="button"
+              onClick={() => setIsPositive((v) => !v)}
+              title="Toggle: higher values are better"
+              aria-pressed={isPositive}
+              className={`self-start text-xs px-2 py-0.5 rounded flex-shrink-0 transition-colors border ${
+                isPositive
+                  ? "text-green-700 bg-green-50 border-green-200 dark:text-green-400 dark:bg-green-900/20 dark:border-green-800"
+                  : "text-muted-foreground bg-muted/50 border-border/50 hover:border-border"
+              }`}
+            >
+              {isPositive ? "↑ good" : "↑ bad"}
+            </button>
+          )}
+          <div className="flex gap-2 pt-1">
+            <Button size="sm" onClick={handleSave} className="gap-1"><Check className="w-3.5 h-3.5" /> Save</Button>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}><X className="w-3.5 h-3.5" /></Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddSymptomForm({ category, onAdd, onCancel }) {
+  const [label, setLabel] = useState("");
+  const [type, setType] = useState("boolean");
+  const [color, setColor] = useState("#8b5cf6");
+  const [isPositive, setIsPositive] = useState(false);
+  const [showColorPicker, setShowColorPicker] = useState(false);
+
+  const handleAdd = () => {
+    if (!label.trim()) return;
+    onAdd({ label: label.trim(), type, color, is_positive: isPositive, category, is_default: false, is_archived: false, order: 999 });
+  };
+
+  return (
+    <div className="bg-card border border-primary/30 rounded-xl p-4 space-y-3">
+      <p className="text-sm font-medium">New {category === "symptom" ? "Symptom" : "Habit"}</p>
+      <div>
+        <label className="text-xs text-muted-foreground mb-1 block">Label</label>
+        <Input value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. Anxiety" className="h-8 text-sm" autoFocus />
+      </div>
+      <div>
+        <label className="text-xs text-muted-foreground mb-1 block">Type</label>
+        <div className="flex gap-2">
+          {["boolean", "rating"].map(t => (
+            <button key={t} onClick={() => setType(t)}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${type === t ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 border-border text-muted-foreground"}`}>
+              {t === "boolean" ? "Yes/No" : "Rating (0–5)"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <label className="text-xs text-muted-foreground mb-1 block">Color</label>
+        <button
+          type="button"
+          onClick={() => setShowColorPicker(true)}
+          className="w-8 h-8 rounded-lg border-2 border-border hover:border-primary/50 transition-colors shadow-sm"
+          style={{ backgroundColor: color }}
+          title="Pick color"
+        />
+        {showColorPicker && (
+          <ColorPickerModal color={color} onSave={c => setColor(c)} onClose={() => setShowColorPicker(false)} />
+        )}
+      </div>
+      {type === "rating" && (
+        <button
+          type="button"
+          onClick={() => setIsPositive((v) => !v)}
+          title="Toggle: higher values are better"
+          aria-pressed={isPositive}
+          className={`self-start text-xs px-2 py-0.5 rounded flex-shrink-0 transition-colors border ${
+            isPositive
+              ? "text-green-700 bg-green-50 border-green-200 dark:text-green-400 dark:bg-green-900/20 dark:border-green-800"
+              : "text-muted-foreground bg-muted/50 border-border/50 hover:border-border"
+          }`}
+        >
+          {isPositive ? "↑ good" : "↑ bad"}
+        </button>
+      )}
+      <div className="flex gap-2">
+        <Button size="sm" onClick={handleAdd} disabled={!label.trim()} className="gap-1"><Check className="w-3.5 h-3.5" /> Add</Button>
+        <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+      </div>
+    </div>
+  );
+}
+
+function SymptomTab({ category, contextOnly = false }) {
+  const queryClient = useQueryClient();
+  const [showAdd, setShowAdd] = useState(false);
+  const [showPresets, setShowPresets] = useState(false);
+
+  const { data: symptoms = [] } = useQuery({
+    queryKey: ["symptoms"],
+    queryFn: () => base44.entities.Symptom.list(),
+  });
+
+  const filtered = useMemo(() =>
+    symptoms
+      .filter(s => !s.is_archived &&
+        (contextOnly ? isContextItem(s) : s.category === category && !isContextItem(s)))
+      .sort((a, b) => (a.order || 0) - (b.order || 0)),
+    [symptoms, category, contextOnly]
+  );
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["symptoms"] });
+
+  const handleSave = async (id, data) => {
+    await base44.entities.Symptom.update(id, data);
+    invalidate();
+    toast.success("✅ Saved");
+  };
+
+  const handleDelete = async (id) => {
+    if (!(await confirm("Remove this item?"))) return;
+    await base44.entities.Symptom.update(id, { is_archived: true });
+    invalidate();
+    toast.success("🗑 Removed");
+  };
+
+  const handleAdd = async (data) => {
+    // Context-tab additions store as kind "context" (category stays
+    // "symptom" for back-compat with the tab split elsewhere).
+    await base44.entities.Symptom.create(contextOnly ? { ...data, kind: "context" } : data);
+    invalidate();
+    setShowAdd(false);
+    toast.success("✅ Added");
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="outline" onClick={() => setShowPresets(true)} className="gap-1.5" data-tour="symptom-presets">
+          📦 Browse presets
+        </Button>
+        <Button size="sm" onClick={() => setShowAdd(true)} className="gap-1.5">
+          <Plus className="w-3.5 h-3.5" /> Add {contextOnly ? "Context item" : category === "symptom" ? "Symptom" : "Habit"}
+        </Button>
+      </div>
+
+      {showAdd && <AddSymptomForm category={category} onAdd={handleAdd} onCancel={() => setShowAdd(false)} />}
+      <BundlePicker open={showPresets} onClose={() => setShowPresets(false)} onAdded={invalidate} />
+
+      {filtered.length === 0 && !showAdd && (
+        <div className="flex flex-col items-center py-10 text-center">
+          <div className="text-3xl mb-2">{contextOnly ? "🌦️" : category === "symptom" ? "💊" : "🌱"}</div>
+          <p className="text-sm font-medium text-foreground mb-1">No {contextOnly ? "context items" : category === "symptom" ? "symptoms" : "habits"} yet</p>
+          <p className="text-xs text-muted-foreground">
+            {contextOnly
+              ? "Context items log what was going on around you (stress, routine breaks…) so patterns can be spotted — never scored like symptoms. Add one, or browse the Context & triggers preset pack."
+              : `Add your first ${category === "symptom" ? "symptom" : "habit"} to track it in check-ins.`}
+          </p>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {filtered.map((s, index) => (
+          <SymptomRow key={s.id} symptom={s} index={index} total={filtered.length}
+            onSave={handleSave} onDelete={handleDelete}
+            onMoveUp={async () => {
+              const a = filtered[index - 1];
+              const b = filtered[index];
+              await Promise.all([
+                base44.entities.Symptom.update(a.id, { order: b.order ?? index }),
+                base44.entities.Symptom.update(b.id, { order: a.order ?? index - 1 }),
+              ]);
+              invalidate();
+            }}
+            onMoveDown={async () => {
+              const a = filtered[index];
+              const b = filtered[index + 1];
+              await Promise.all([
+                base44.entities.Symptom.update(a.id, { order: b.order ?? index + 1 }),
+                base44.entities.Symptom.update(b.id, { order: a.order ?? index }),
+              ]);
+              invalidate();
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function ManageCheckIn() {
+  const navigate = useNavigate();
+  const [tab, setTab] = useState("symptoms");
+
+  const TABS = [
+    { id: "sections", label: "Sections" },
+    { id: "feelings", label: "Feelings" },
+    { id: "symptoms", label: "Symptoms" },
+    { id: "habits", label: "Habits" },
+    { id: "context", label: "Context" },
+    { id: "diary", label: "Diary card fields" },
+  ];
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5 os-page-shell">
+      <div className="flex items-center gap-3">
+        <Button variant="ghost" size="icon" onClick={() => navigate("/settings")} className="h-8 w-8">
+          <ChevronLeft className="w-4 h-4" />
+        </Button>
+        <div>
+          <h1 className="font-display text-2xl font-semibold">Manage Check-In</h1>
+          <p className="text-muted-foreground text-xs">Configure what Quick Check-In tracks</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-1 bg-muted/50 rounded-xl p-1">
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} data-tour={t.id === "feelings" ? "checkin-feelings-tab" : undefined}
+            className={`py-2 px-1 rounded-lg text-sm font-medium transition-all truncate ${tab === t.id ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Opt-in upgrade card for users on the legacy catalogue —
+          rendered once (not per-tab) since the migration touches every
+          category. Auto-hides when there's nothing to migrate or the
+          user dismissed it. */}
+      {(tab === "symptoms" || tab === "habits" || tab === "context") && (
+        <>
+          <LegacyCatalogueMigrationCard />
+          <SymptomDuplicatesCard />
+        </>
+      )}
+
+      {tab === "sections" && <SectionsTab />}
+      {tab === "feelings" && <FeelingsTab />}
+      {tab === "symptoms" && <SymptomTab category="symptom" />}
+      {tab === "habits" && <SymptomTab category="habit" />}
+      {tab === "context" && <SymptomTab category="symptom" contextOnly />}
+      {tab === "diary" && <DiaryTemplateManager />}
+    </motion.div>
+  );
+}

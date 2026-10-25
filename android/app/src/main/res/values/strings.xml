@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Apeiron Zetta</string>
+    <string name="title_activity_main">Apeiron Zetta</string>
+    <string name="package_name">app.apeironzetta.ss330</string>
+    <string name="custom_url_scheme">app.apeironzetta.ss330</string>
+</resources>
