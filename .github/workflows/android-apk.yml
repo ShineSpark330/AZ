@@ -85,6 +85,26 @@ jobs:
       - name: Sync into the Android project
         run: npx cap sync android
 
+      # Fixes "error: package R does not exist" in MediaKeepAliveService.java.
+      # The generated R class lives in the Gradle `namespace`. If that differs
+      # from the Java file's package, R is not visible without an import, so
+      # add the import automatically.
+      - name: Make R resolve in MediaKeepAliveService
+        run: |
+          SRC=$(find android/app/src/main/java -name MediaKeepAliveService.java | head -1)
+          [ -n "$SRC" ] || { echo "MediaKeepAliveService.java not found, skipping"; exit 0; }
+          NS=$(grep -oP "namespace\s*=?\s*['\"]\K[^'\"]+" android/app/build.gradle | head -1)
+          PKG=$(grep -oP '^package\s+\K[^;\s]+' "$SRC")
+          echo "gradle namespace: ${NS:-<none>} | java package: $PKG"
+          [ -n "$NS" ] || { echo "No namespace found in build.gradle, skipping"; exit 0; }
+          if [ "$NS" != "$PKG" ] && ! grep -q "^import $NS\.R;" "$SRC"; then
+            sed -i "0,/^package .*;/s//&\n\nimport $NS.R;/" "$SRC"
+            echo "Added: import $NS.R;"
+            echo "- added \`import $NS.R;\` to MediaKeepAliveService.java" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No import needed"
+          fi
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
