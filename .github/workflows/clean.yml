@@ -23,25 +23,32 @@ jobs:
         run: |
           echo "Files at the top of the repo:"
           ls -la
-          # Stop before deleting anything if the archive isn't exactly os.7z
-          # at the top level (a different name, another folder or another
-          # branch would otherwise leave the repo with no archive).
-          [ -f os.7z ] || { echo "os.7z not found at the repo root on this branch - nothing deleted." >&2; exit 1; }
+          if [ ! -f os.7z ]; then
+            echo "::error::os.7z not found at the repo root on this branch - nothing deleted."
+            exit 1
+          fi
 
       - name: Delete everything except .github and os.7z
         run: |
-          find . -mindepth 1 -maxdepth 1 \
-            ! -name '.git' \
-            ! -name '.github' \
-            ! -name 'os.7z' \
-            -exec rm -rf {} +
+          # Enable extended pattern matching in bash
+          shopt -s extglob
+          
+          echo "Deleting files..."
+          # Remove everything at root except .github, .git, and os.7z
+          rm -rf !(.|..|.git|.github|os.7z)
+          
+          echo "Remaining files:"
           ls -la
-          [ -f os.7z ] || { echo "os.7z is gone after cleaning" >&2; exit 1; }
+          
+          if [ ! -f os.7z ]; then
+            echo "::error::os.7z was accidentally deleted during the process!"
+            exit 1
+          fi
 
       - name: Commit and push
         run: |
           git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@://github.com"
           git add -A
           if git diff --cached --quiet; then
             echo "Nothing to delete."
