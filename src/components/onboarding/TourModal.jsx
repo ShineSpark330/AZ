@@ -198,12 +198,12 @@ export default function TourModal({ open, onClose, openAt = null }) {
   const steps = [
     {
       phase: "Welcome",
-      title: "Welcome to Oceans Symphony",
+      title: "Welcome to Apeiron Zetta",
       subtitle: "A companion app built for dissociative systems",
       icon: <Bell className="w-8 h-8" />,
       color: "from-violet-500/20 to-purple-500/20",
       body:
-        `Oceans Symphony is built by and for DID/dissociative ${t.systems}, and is completely free for anyone to use, for any purpose. It is designed specifically to help track and manage dissociative and PTSD symptoms, help your ${t.system} stay connected, track experiences, and bridge the gaps that amnesia creates; a local, private, life companion app.\n\n` +
+        `Apeiron Zetta is built by and for DID/dissociative ${t.systems}, and is completely free for anyone to use, for any purpose. It is designed specifically to help track and manage dissociative and PTSD symptoms, help your ${t.system} stay connected, track experiences, and bridge the gaps that amnesia creates; a local, private, life companion app.\n\n` +
         `The following pages will help you set up and learn about OS' features!`,
       render: () => (
         <div className="space-y-3 pt-1 border-t border-border/40">
@@ -216,7 +216,7 @@ export default function TourModal({ open, onClose, openAt = null }) {
               onChange={(e) => setAckChecked(e.target.checked)}
             />
             <span>
-              I understand Oceans Symphony is <strong>not a medical product</strong> — it doesn't
+              I understand Apeiron Zetta is <strong>not a medical product</strong> — it doesn't
               diagnose, treat, or replace care from a professional.
             </span>
           </label>
@@ -521,7 +521,7 @@ export default function TourModal({ open, onClose, openAt = null }) {
       subtitle: "Your data, your control",
       icon: "🔒",
       color: "from-slate-500/20 to-gray-500/20",
-      body: `Oceans Symphony is private by design — by default, your data stays on this device only. Nothing is uploaded or synced by default; records live in this browser's IndexedDB and only leave the device if you export a backup yourself, opt in to Friends mode, or turn on cloud-backed reminders. (Friends sends your display name, ${t.system} name, friend code, friends list, push registration, public key and current ${t.front} — at the granularity you pick — plus any ${t.alters} you share, end-to-end encrypted; never your journals, check-ins or other local data.) By default records are stored unencrypted, so anyone with access to the device could read them. For even greater security, turn on password encryption under Settings → Data & privacy → Storage & encryption: that adds AES-256-GCM encryption at rest on top (on-device only — not end-to-end). The app is free and open source, built by a dissociative ${t.system}, and is in active development — bugs may be encountered. Regular backups are recommended — you'll be asked once how you want them handled, and backup files can be password-locked.`,
+      body: `Apeiron Zetta is private by design — by default, your data stays on this device only. Nothing is uploaded or synced by default; records live in this browser's IndexedDB and only leave the device if you export a backup yourself, opt in to Friends mode, or turn on cloud-backed reminders. (Friends sends your display name, ${t.system} name, friend code, friends list, push registration, public key and current ${t.front} — at the granularity you pick — plus any ${t.alters} you share, end-to-end encrypted; never your journals, check-ins or other local data.) By default records are stored unencrypted, so anyone with access to the device could read them. For even greater security, turn on password encryption under Settings → Data & privacy → Storage & encryption: that adds AES-256-GCM encryption at rest on top (on-device only — not end-to-end). The app is free and open source, built by a dissociative ${t.system}, and is in active development — bugs may be encountered. Regular backups are recommended — you'll be asked once how you want them handled, and backup files can be password-locked.`,
       tip: "Privacy & Data Notice lives at the top of Settings — tap to expand for details.",
       features: [
         "Unencrypted by default",
@@ -550,7 +550,7 @@ export default function TourModal({ open, onClose, openAt = null }) {
       onClose={onClose}
       onFinish={handleFinish}
       steps={steps}
-      ariaLabel="Oceans Symphony guide"
+      ariaLabel="Apeiron Zetta guide"
       finishLabel="Start exploring 💜"
       skipLabel="Skip guide"
       initialStep={openAt && STEP_ID_INDEX[openAt] != null ? STEP_ID_INDEX[openAt] : 0}

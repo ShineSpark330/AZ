@@ -51,7 +51,7 @@ export default async function handler(req, res) {
   // Bound what a client can put on its own lock screen; this endpoint is a
   // self-test, not a general messaging channel.
   const safePayload = {
-    title: String(payload.title || 'Oceans Symphony').slice(0, 120),
+    title: String(payload.title || 'Apeiron Zetta').slice(0, 120),
     body: String(payload.body || '').slice(0, 300),
     reminderInstanceId: null,
     inlineActions: [],

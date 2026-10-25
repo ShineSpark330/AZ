@@ -301,7 +301,7 @@ export function parseSnapshotFile(text) {
     throw new Error("That file isn't readable JSON.");
   }
   if (file?.__format !== SYNC_FORMAT && file?.__format !== SYNC_MEDIA_FORMAT) {
-    throw new Error("That file isn't an Oceans Symphony sync snapshot.");
+    throw new Error("That file isn't an Apeiron Zetta sync snapshot.");
   }
   if ((file.__version || 0) > SYNC_VERSION) {
     throw new Error(`That snapshot was written by a newer version of the app (format ${file.__version}). Update this device first.`);

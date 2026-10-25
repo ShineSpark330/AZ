@@ -19,7 +19,7 @@ const RESOURCES = {
       {
         title: "Finding Solid Ground",
         author: "Bethany L. Brand, Hugo J. Schielke, Frances S. Howell, and Ruth A. Lanius",
-        blurb: "A trauma-focused workbook and the primary source for Oceans Symphony's Learn curriculum. Step-by-step skills for grounding, stabilisation, and trauma-related symptom management. Designed to be used alongside a trauma-informed therapist.",
+        blurb: "A trauma-focused workbook and the primary source for Apeiron Zetta's Learn curriculum. Step-by-step skills for grounding, stabilisation, and trauma-related symptom management. Designed to be used alongside a trauma-informed therapist.",
       },
       {
         title: "Coping With Trauma-Related Dissociation",
@@ -90,7 +90,7 @@ export default function ResourcesView({ onBack }) {
       <details className="rounded-xl border border-amber-500/30 bg-amber-500/5">
         <summary className="flex items-center gap-2 px-3 py-2.5 cursor-pointer text-sm font-medium text-amber-700 dark:text-amber-400">
           <AlertTriangle className="w-4 h-4" />
-          Disclaimer — Oceans Symphony is not a medical product
+          Disclaimer — Apeiron Zetta is not a medical product
         </summary>
         <div className="px-3 pb-3 pt-1">
           <MedicalDisclaimer compact />
@@ -100,7 +100,7 @@ export default function ResourcesView({ onBack }) {
       <div className="space-y-2">
         <h2 className="text-lg font-semibold text-foreground">Resources</h2>
         <p className="text-sm text-muted-foreground leading-relaxed">
-          The Learn curriculum draws from a small number of clinical workbooks; this page links you back to those sources, plus a few other reads and online communities that the wider plural and DID community has found useful. None of these are endorsements of any particular treatment, and Oceans Symphony itself is not a medical product.
+          The Learn curriculum draws from a small number of clinical workbooks; this page links you back to those sources, plus a few other reads and online communities that the wider plural and DID community has found useful. None of these are endorsements of any particular treatment, and Apeiron Zetta itself is not a medical product.
         </p>
       </div>
 

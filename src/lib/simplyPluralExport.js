@@ -14,7 +14,7 @@
 // Round-trip / identity:
 //   • Every record reuses its local `sp_id` when it has one (records that came
 //     in via the SP importer), so re-importing into SP / PluralSpace keeps the
-//     same identity, and re-importing into Oceans Symphony dedups on sp_id.
+//     same identity, and re-importing into Apeiron Zetta dedups on sp_id.
 //   • A single system `uid` is reused across every collection. We reuse an
 //     existing `sp_system_id` from SystemSettings (or any record's stored sp uid)
 //     when present, else mint one — so a re-import lands under the same system.

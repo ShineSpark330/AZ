@@ -1,18 +1,18 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "app.oceans_symphony.twa"
+    namespace = "app.apeironzetta.z330"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "app.oceans_symphony.twa"
+        applicationId "app.apeironzetta.z330"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // versionCode must be strictly greater than the last Play
         // upload — Play rejects duplicates. Bump for every Play
         // release; mirror versionName from src/lib/appVersion.js so
         // the displayed version chip matches the Play release.
-        versionCode 1319
-        versionName "0.271.4"
+        versionCode 1320
+        versionName "0.271.5"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

@@ -14,7 +14,7 @@
 //   timestamp extension; Maps/Sets/Files become plain `{_meta, value}` objects.
 //
 // Ampersand supports MULTIPLE systems (the `systems` table; members link to one
-// via `member.system`), which maps perfectly onto Oceans Symphony's own
+// via `member.system`), which maps perfectly onto Apeiron Zetta's own
 // multi-system model: we create ONE OS system per Ampersand system and drop that
 // system's members/fronting/journals into it.
 //

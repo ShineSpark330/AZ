@@ -106,7 +106,7 @@ export async function reconcileNativeBackupReminder() {
       notifications: [
         {
           id: NATIVE_BACKUP_NOTIFICATION_ID,
-          title: "Time to back up Oceans Symphony",
+          title: "Time to back up Apeiron Zetta",
           body: "Tap to save a fresh copy of your data to Documents.",
           channelId: REMINDERS_CHANNEL_ID,
           schedule: everyUnit

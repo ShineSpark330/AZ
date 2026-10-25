@@ -1,5 +1,5 @@
 // Background runner — polls the Friends API on a 15-minute timer when
-// the Oceans Symphony app is in the background, and fires a local
+// the Apeiron Zetta app is in the background, and fires a local
 // notification if any followed friend's front has changed since the
 // last poll.
 //

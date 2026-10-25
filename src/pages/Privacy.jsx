@@ -22,12 +22,12 @@ export default function Privacy() {
           </div>
           <div>
             <h1 className="text-xl font-bold">Privacy Policy</h1>
-            <p className="text-xs text-muted-foreground">Oceans Symphony · Last updated August 2026</p>
+            <p className="text-xs text-muted-foreground">Apeiron Zetta · Last updated August 2026</p>
           </div>
         </div>
 
         <p className="text-sm text-muted-foreground leading-relaxed">
-          Oceans Symphony is designed to be private by default. Your personal data stays on your
+          Apeiron Zetta is designed to be private by default. Your personal data stays on your
           device. This policy explains exactly what is and isn't collected.
         </p>
 
@@ -141,7 +141,7 @@ export default function Privacy() {
 
         <Section title="Children">
           <p>
-            Oceans Symphony is not directed at children under 13. We do not knowingly
+            Apeiron Zetta is not directed at children under 13. We do not knowingly
             collect information from children under 13.
           </p>
         </Section>
@@ -162,7 +162,7 @@ export default function Privacy() {
         </Section>
 
         <div className="pt-4 border-t border-border/40">
-          <Link to="/" className="text-xs text-primary hover:underline">← Back to Oceans Symphony</Link>
+          <Link to="/" className="text-xs text-primary hover:underline">← Back to Apeiron Zetta</Link>
         </div>
       </div>
     </div>

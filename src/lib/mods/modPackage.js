@@ -50,7 +50,7 @@ export function parseModFile(text) {
   let raw;
   try { raw = JSON.parse(text); } catch { throw new ModFormatError("This file isn't a mod — it isn't readable mod data."); }
   if (!raw || typeof raw !== "object" || raw.format !== MOD_FORMAT) {
-    throw new ModFormatError("This file isn't an Oceans Symphony mod.");
+    throw new ModFormatError("This file isn't an Apeiron Zetta mod.");
   }
   if (Number(raw.formatVersion || 1) > MOD_FORMAT_VERSION) {
     throw new ModFormatError("This mod needs a newer version of the app. Update the app, then try again.");

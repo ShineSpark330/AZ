@@ -5,7 +5,7 @@
 // to the back of the queue, "Got it" retires it for this round.
 //
 // Same neutral wording and palette as the rest of the panel — it doubles
-// as the privacy cover, so nothing here may read like Oceans Symphony.
+// as the privacy cover, so nothing here may read like Apeiron Zetta.
 
 import React, { useMemo, useRef, useState } from "react";
 import { Plus, X, Image as ImageIcon, Camera, Pencil, RotateCcw, Shuffle, Trash2 } from "lucide-react";

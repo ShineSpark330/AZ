@@ -77,7 +77,7 @@ function InstallDialog({ pending, existing, onClose, onInstalled, terms }) {
             ))}
           </div>
           <p className="text-xs text-muted-foreground">
-            Mods are made by other people, not by Oceans Symphony. Each one runs walled off from the rest of the app with no internet access, and can't change or delete anything outside its own data. Only install mods from people you trust.
+            Mods are made by other people, not by Apeiron Zetta. Each one runs walled off from the rest of the app with no internet access, and can't change or delete anything outside its own data. Only install mods from people you trust.
           </p>
         </div>
         <div className="flex justify-end gap-2 pt-2">

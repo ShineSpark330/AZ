@@ -89,7 +89,7 @@ export default function RecoveryScreen({ reason, onResolved }) {
     return shareFile({
       blob,
       filename,
-      title: "Oceans Symphony recovery file",
+      title: "Apeiron Zetta recovery file",
       dialogTitle: "Save recovery file",
     });
   };

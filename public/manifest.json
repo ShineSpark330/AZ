@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Oceans Symphony",
-  "short_name": "Oceans",
+  "name": "Apeiron Zetta",
+  "short_name": "Apeiron",
   "scope": "/",
   "prefer_related_applications": false,
   "description": "A private, local-first journaling and daily organizer for plural and multi-identity users. All data stays on your device.",
@@ -50,7 +50,7 @@
       "sizes": "1079x2048",
       "type": "image/jpeg",
       "form_factor": "narrow",
-      "label": "Welcome tour introducing Oceans Symphony"
+      "label": "Welcome tour introducing Apeiron Zetta"
     }
   ],
   "categories": ["lifestyle", "productivity", "utilities"],

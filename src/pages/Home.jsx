@@ -63,7 +63,7 @@ export default function Home() {
           <Sparkles className="w-9 h-9 text-primary/40" />
         </div>
         <h1 className="font-display text-3xl font-semibold text-foreground mb-2">
-          Welcome to Oceans Symphony
+          Welcome to Apeiron Zetta
         </h1>
         <p className="text-muted-foreground max-w-md leading-relaxed mb-8">
           Import your {terms.alters} from another plural app, or add them manually.

@@ -9,7 +9,7 @@ import { useTerms } from "@/lib/useTerms";
 import { applyTerms } from "@/lib/dailyTaskSystem";
 
 // Google Play listing for the app (the "leave a review" target).
-const PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=app.oceans_symphony.twa";
+const PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=app.apeironzetta.z330";
 
 // "What's new" strip on the dashboard. Shows the latest changelog
 // date block whenever the user opens the app on a version they
@@ -195,7 +195,7 @@ export default function NewFeaturesBar({ embedded = false }) {
           {/* Persistent feedback CTA. Lives INSIDE the What's new panel, so it
               vanishes when the bar is dismissed — non-obtrusive. */}
           <div className="pt-2 border-t border-primary/20 text-[0.6875rem] text-muted-foreground leading-relaxed">
-            Enjoying Oceans Symphony? Have any issues?{" "}
+            Enjoying Apeiron Zetta? Have any issues?{" "}
             <button type="button" onClick={() => openExternalUrl(PLAY_STORE_URL)} className="font-medium text-primary hover:underline">leave a review</button>
             {" "}or{" "}
             <button type="button" onClick={() => setBugOpen(true)} className="font-medium text-primary hover:underline">submit a bug report</button>

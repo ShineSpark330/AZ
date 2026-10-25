@@ -44,7 +44,7 @@ export default function RelayServerSettings() {
       const res = await fetch(`${target}/health`, { method: "GET" });
       const body = await res.json().catch(() => null);
       if (res.ok && body?.ok) return { ok: true, text: "Reachable, and its database is up." };
-      if (res.ok) return { ok: false, text: "Answered, but not like an Oceans Symphony relay." };
+      if (res.ok) return { ok: false, text: "Answered, but not like an Apeiron Zetta relay." };
       if (body?.redis === "down") return { ok: false, text: "Relay is up but its database is down." };
       return { ok: false, text: `Relay answered ${res.status}.` };
     } catch (e) {

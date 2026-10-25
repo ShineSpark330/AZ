@@ -37,7 +37,7 @@ import OpenFrontsCurrentOption from "@/components/settings/OpenFrontsCurrentOpti
 // (SimplyPluralConnect) can't return chat — SP chat is end-to-end-encrypted, so
 // the API never serves plaintext messages. The export file, by contrast, has
 // EVERYTHING in plaintext, including chat, so this is the way to bring a user's
-// full SP data (especially their chat history) into Oceans Symphony.
+// full SP data (especially their chat history) into Apeiron Zetta.
 //
 // Reuses the pure mappers in src/lib/simplyPlural.js verbatim (mapMemberToAlter,
 // mapGroupToLocalGroup, mapFrontHistoryEntry, spFieldType, normalizeColor) —

@@ -241,7 +241,7 @@ const bioGestures = `
 const bioDashboard = `
   ${hero({ eyebrow: "Feature · Home screen", title: "Dashboard", blurb: `The at-a-glance home for what's happening right now — current fronters, status, pins, plans, tasks, and search, top to bottom.`, c1: "#a855f7", c2: "#6366f1", emoji: "🏠" })}
   ${section("Header bar",
-    `App logo on the left (tap → home). Centered title "${"Oceans Symphony"}". On the right: a 🛒 grocery list button (also opens via triple-tap), the notification bell (= reminders + push), and Settings. The bar has a faint primary-tinted wave block on its top half; the wave scrolls slowly. The bottom border matches the bottom tab bar so the header reads as a defined band.`)}
+    `App logo on the left (tap → home). Centered title "${"Apeiron Zetta"}". On the right: a 🛒 grocery list button (also opens via triple-tap), the notification bell (= reminders + push), and Settings. The bar has a faint primary-tinted wave block on its top half; the wave scrolls slowly. The bottom border matches the bottom tab bar so the header reads as a defined band.`)}
   ${section("Currently Fronting strip",
     `Cards for every active fronting alter. The primary fronter is marked with a star + a green pulse. Cards have the swipe gestures from the Gestures alter:
       <ul style="padding-left:22px;margin:4px 0;line-height:1.55;">

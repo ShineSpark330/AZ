@@ -124,7 +124,7 @@ function withPickerWatchdog(promise) {
     const giveUp = () => {
       if (settled) return;
       finish();
-      reject(new Error("The file picker didn't answer. Something on your phone, like a security app, may have blocked it. Try again, or allow Oceans Symphony in that app."));
+      reject(new Error("The file picker didn't answer. Something on your phone, like a security app, may have blocked it. Try again, or allow Apeiron Zetta in that app."));
     };
     const onLeave = () => { left = true; clearTimeout(timer); };
     const onBack = () => { if (!left || settled) return; clearTimeout(timer); timer = setTimeout(giveUp, PICKER_RETURN_GRACE_MS); };

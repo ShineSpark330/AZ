@@ -13,7 +13,7 @@ import { isNative } from "@/lib/platform";
 import { getLocalIdentity } from "@/lib/friendsApi";
 import { apiBase } from "@/lib/apiBase";
 
-const RUNNER_LABEL = "app.oceans_symphony.twa.friends";
+const RUNNER_LABEL = "app.apeironzetta.z330.friends";
 
 async function dispatchRunnerEvent(event, details) {
   if (!isNative()) return false;

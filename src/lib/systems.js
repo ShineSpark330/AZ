@@ -1,6 +1,6 @@
 // Multiple-systems registry (Phase 0 foundation).
 //
-// Oceans Symphony stores its ENTIRE database as one blob behind localDb.js
+// Apeiron Zetta stores its ENTIRE database as one blob behind localDb.js
 // (IndexedDB key `symphony_local_data`). "Multiple systems" is therefore NOT
 // a `system_id` column on every record — it's ONE data blob per system plus a
 // small app-level registry that records which systems exist and which one is

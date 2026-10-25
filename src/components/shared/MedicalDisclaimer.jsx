@@ -12,7 +12,7 @@ export default function MedicalDisclaimer({ compact = false }) {
       <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
         <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
         <p className="text-foreground leading-relaxed">
-          <strong>Oceans Symphony is a personal journaling and organisation tool, not a medical product.</strong>
+          <strong>Apeiron Zetta is a personal journaling and organisation tool, not a medical product.</strong>
           {" "}It is not a health app, not a therapy app, and not a substitute for professional care.
         </p>
       </div>
@@ -22,7 +22,7 @@ export default function MedicalDisclaimer({ compact = false }) {
           This app is built by a DID system for our own use and shared with the
           plural community in good faith. <strong className="text-foreground">We are not licensed
           mental health professionals</strong> — not therapists, psychologists, psychiatrists,
-          counsellors, doctors, or clinicians of any kind. Oceans Symphony has not been
+          counsellors, doctors, or clinicians of any kind. Apeiron Zetta has not been
           designed, reviewed, validated, endorsed, or approved by any clinician,
           hospital, regulatory body, or medical institution.
         </p>
@@ -74,7 +74,7 @@ export default function MedicalDisclaimer({ compact = false }) {
         </p>
 
         <p className="pt-2 text-xs italic">
-          By using Oceans Symphony you acknowledge that the developers are not
+          By using Apeiron Zetta you acknowledge that the developers are not
           medical professionals, that the app is provided "as is" without any
           clinical validation, and that you are responsible for seeking
           appropriate professional support for any medical or mental-health needs.
@@ -93,7 +93,7 @@ export function MedicalDisclaimerFooter({ open = false, className = "" }) {
     <details open={open} className={`rounded-xl border border-amber-500/30 bg-amber-500/5 ${className}`}>
       <summary className="flex items-center gap-2 px-3 py-2.5 cursor-pointer text-sm font-medium text-amber-700 dark:text-amber-400">
         <span aria-hidden="true">⚠️</span>
-        Disclaimer — Oceans Symphony is not a medical product
+        Disclaimer — Apeiron Zetta is not a medical product
       </summary>
       <div className="px-3 pb-3 pt-1">
         <MedicalDisclaimer compact />

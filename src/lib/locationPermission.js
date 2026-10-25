@@ -33,7 +33,7 @@ export async function getCurrentPositionWithPrompt({ timeout = 10000 } = {}) {
           if (req.location !== "granted") {
             toast.error(
               req.location === "denied"
-                ? "Location permission denied. Enable it in your device Settings → Apps → Oceans Symphony → Permissions to use this feature."
+                ? "Location permission denied. Enable it in your device Settings → Apps → Apeiron Zetta → Permissions to use this feature."
                 : "Location permission is needed for this feature."
             );
             return null;

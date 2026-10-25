@@ -57,7 +57,7 @@ export async function registerPush() {
   if (isNative()) {
     const result = await requestNativePermission();
     if (result.display !== 'granted') {
-      throw new Error('Notification permission denied. Open system Settings → Apps → Oceans Symphony → Notifications to allow.');
+      throw new Error('Notification permission denied. Open system Settings → Apps → Apeiron Zetta → Notifications to allow.');
     }
     return result;
   }

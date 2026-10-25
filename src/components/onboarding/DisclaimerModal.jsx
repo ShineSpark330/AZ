@@ -9,7 +9,7 @@ import { useTerms } from "@/lib/useTerms";
 export const DISCLAIMER_ACK_KEY = "disclaimer_acknowledged_v1";
 
 // First-run modal — non-dismissable. Two steps:
-//   1. A short "Welcome to Oceans Symphony" intro that explains what the app
+//   1. A short "Welcome to Apeiron Zetta" intro that explains what the app
 //      is for (so first-run no longer drops straight into setup with no
 //      context).
 //   2. The full medical / scope disclaimer with a required "I understand"
@@ -60,14 +60,14 @@ export default function DisclaimerModal({ onAcknowledge }) {
                 <Heart className="w-5 h-5 text-primary" />
               </div>
               <div className="min-w-0">
-                <h2 className="text-lg font-semibold">Welcome to Oceans Symphony 💜</h2>
+                <h2 className="text-lg font-semibold">Welcome to Apeiron Zetta 💜</h2>
                 <p className="text-xs text-muted-foreground">A quick hello before you get set up.</p>
               </div>
             </div>
 
             <div className="px-5 py-5 space-y-4 text-sm leading-relaxed">
               <p>
-                More than just a tracker — Oceans Symphony is a companion app built
+                More than just a tracker — Apeiron Zetta is a companion app built
                 for dissociative {t.systems}.
               </p>
               <p>
@@ -95,7 +95,7 @@ export default function DisclaimerModal({ onAcknowledge }) {
               <div className="min-w-0">
                 <h2 className="text-lg font-semibold">Before you continue</h2>
                 <p className="text-xs text-muted-foreground">
-                  Please read this carefully — it explains what Oceans Symphony is and isn't.
+                  Please read this carefully — it explains what Apeiron Zetta is and isn't.
                 </p>
               </div>
             </div>
@@ -112,7 +112,7 @@ export default function DisclaimerModal({ onAcknowledge }) {
                   className="mt-0.5 flex-shrink-0"
                 />
                 <span className="text-sm leading-relaxed">
-                  I understand that Oceans Symphony is not a medical product, the
+                  I understand that Apeiron Zetta is not a medical product, the
                   developers are not licensed mental-health professionals, and the
                   app does not provide medical or clinical advice.
                 </span>

@@ -24,9 +24,9 @@ export default function BetaTesterBanner() {
   const handleSubmit = () => {
     const trimmed = email.trim();
     if (!trimmed || !trimmed.includes("@")) return;
-    const subject = encodeURIComponent("Oceans Symphony — sign me up as a tester");
+    const subject = encodeURIComponent("Apeiron Zetta — sign me up as a tester");
     const body = encodeURIComponent(
-      `Hi! Please add me to the Oceans Symphony Play Store tester list.\n\nMy Google account: ${trimmed}\n\nThanks!`
+      `Hi! Please add me to the Apeiron Zetta Play Store tester list.\n\nMy Google account: ${trimmed}\n\nThanks!`
     );
     window.location.href = `mailto:${TESTER_EMAIL}?subject=${subject}&body=${body}`;
     setSent(true);

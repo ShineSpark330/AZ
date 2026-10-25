@@ -18,7 +18,17 @@
 
 export const CHANGELOG = [
   {
+    date: "October 25, 2026",
+    changes: [
+      { type: "feature", text: "New app icon: the colourful ring art is now the app icon, the in-app logo and the notification picture." },
+      { type: "improve", text: "The app is now named Apeiron Zetta, with its own app id (app.apeironzetta.z330) — it installs as a separate app from Oceans Symphony." },
+      { type: "improve", text: "Everything you see in the app, the web version and the install page now says Apeiron Zetta instead of Oceans Symphony. Your data and backup folders are unchanged." },
+      { type: "fix", text: "Keyboard: after opening the keyboard picker (switch keyboard) or another pop-up over the keyboard, the screen could stay squashed with the bottom bar stuck halfway up. The layout now re-measures itself when you come back." },
+    ],
+  },
+  {
     date: "October 24, 2026",
+    version: "0.271.4",
     changes: [
       { type: "fix", text: "Tempo & pitch: with tempo and pitch unlinked, the sound is no longer quieter than when they're linked — the pitch shifter now matches the original loudness, and a tempo change gets a small lift." },
       { type: "feature", text: "Accessibility: new \"Play inside the app only\" option. When it's on, songs, audio and videos stop as soon as you leave the app (Home or Recents) instead of carrying on in the background, and nothing starts on its own while you're away. Off by default." },

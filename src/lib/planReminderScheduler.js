@@ -435,7 +435,7 @@ export async function scheduledAlertsDiagnostics() {
   }
 
   const granted = await isNativeNotificationsEnabled();
-  checks.push({ ok: granted, label: "Notification permission", detail: granted ? "Granted" : "Denied — allow notifications in system Settings \u2192 Apps \u2192 Oceans Symphony" });
+  checks.push({ ok: granted, label: "Notification permission", detail: granted ? "Granted" : "Denied — allow notifications in system Settings \u2192 Apps \u2192 Apeiron Zetta" });
 
   try {
     const { LocalNotifications } = await import("@capacitor/local-notifications");
@@ -444,7 +444,7 @@ export async function scheduledAlertsDiagnostics() {
     try {
       const ex = await LocalNotifications.checkExactNotificationSetting();
       const ok = (ex?.exact_alarm ?? ex?.value ?? "granted") === "granted";
-      checks.push({ ok, label: "Exact alarms", detail: ok ? "Allowed" : "Not allowed — Android delays or drops timed alerts. System Settings \u2192 Apps \u2192 Oceans Symphony \u2192 Alarms & reminders" });
+      checks.push({ ok, label: "Exact alarms", detail: ok ? "Allowed" : "Not allowed — Android delays or drops timed alerts. System Settings \u2192 Apps \u2192 Apeiron Zetta \u2192 Alarms & reminders" });
     } catch { /* API absent on this platform/version — skip */ }
 
     try {

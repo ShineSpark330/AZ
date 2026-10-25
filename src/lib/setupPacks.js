@@ -517,7 +517,7 @@ export async function savePackFile(blob, filename) {
     } catch { /* fall through to the share chain */ }
   }
   const { shareFile } = await import("@/lib/shareFile");
-  return shareFile({ blob, filename, title: "Oceans Symphony setup pack", dialogTitle: "Save setup pack", prefer: "download" });
+  return shareFile({ blob, filename, title: "Apeiron Zetta setup pack", dialogTitle: "Save setup pack", prefer: "download" });
 }
 
 // ── What a pack actually contains, in the app's own words ──────────
@@ -836,10 +836,10 @@ export function formatShareMessage(pack, code) {
   if (t.widgetStyles?.length) bits.push(`${t.widgetStyles.length} widget style${t.widgetStyles.length === 1 ? "" : "s"}`);
   if (t.uiTheme) bits.push("theme");
   return [
-    `🌊 Oceans Symphony setup pack — "${pack?.title || "My setup"}"`,
+    `🌊 Apeiron Zetta setup pack — "${pack?.title || "My setup"}"`,
     `Includes: ${bits.join(" · ") || "nothing"}`,
     "",
-    "To use it: open Oceans Symphony → home screen settings → Presets → Setup packs → Import, and paste this whole message.",
+    "To use it: open Apeiron Zetta → home screen settings → Presets → Setup packs → Import, and paste this whole message.",
     "It only changes how the app looks. It carries no personal data.",
     "",
     code,

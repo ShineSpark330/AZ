@@ -633,7 +633,7 @@ export default function PluralKitConnect({ settings, onSettingsChange }) {
                 <h4 className="font-medium text-sm">Import switch history</h4>
               </div>
               <p className="text-xs text-muted-foreground">
-                Only switches involving members already imported into Oceans Symphony are kept. Import members first.
+                Only switches involving members already imported into Apeiron Zetta are kept. Import members first.
               </p>
               <div className="flex items-center gap-2 flex-wrap">
                 <Label htmlFor="pk-switch-days" className="text-xs">Range:</Label>

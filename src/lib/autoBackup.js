@@ -573,7 +573,7 @@ export async function runAutoBackupNow({ silent = false, allSystems = "best", fo
   const date = new Date().toISOString().slice(0, 10);
   const name = getBackupName();
   const discreet = name !== DEFAULT_BACKUP_NAME;
-  const shareTitle = discreet ? "Backup" : "Oceans Symphony backup";
+  const shareTitle = discreet ? "Backup" : "Apeiron Zetta backup";
   // The file itself, in the chosen format. The off-device copy is always
   // the plain .json backup (the one file the copy place was chosen for):
   // for a zip that's its data part — every record; the files stay in the

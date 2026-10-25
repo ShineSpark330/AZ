@@ -14,7 +14,7 @@ import { isNative } from "@/lib/platform";
 //
 // They didn't — their TWA data is still on the device in the
 // previous app's storage, just unreachable from the new WebView.
-// Best path forward is: import an Oceans Symphony backup file (if
+// Best path forward is: import an Apeiron Zetta backup file (if
 // they have one). If they don't, they should treat this as a fresh
 // install. This modal makes that decision explicit so it can't be
 // missed.
@@ -74,7 +74,7 @@ export default function TwaToNativeMigrationModal({ open, onClose, onImport }) {
             <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="font-semibold text-lg leading-tight">Welcome to the native Oceans Symphony</h3>
+            <h3 className="font-semibold text-lg leading-tight">Welcome to the native Apeiron Zetta</h3>
             <p className="text-xs text-muted-foreground mt-1">
               This version replaces the old web-wrapper build under the same Play listing.
             </p>

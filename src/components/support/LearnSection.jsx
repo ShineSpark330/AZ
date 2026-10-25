@@ -67,7 +67,7 @@ export default function LearnSection({ onTryTechnique, initialTopicId = null }) 
       <details className="rounded-xl border border-amber-500/30 bg-amber-500/5">
         <summary className="flex items-center gap-2 px-3 py-2.5 cursor-pointer text-sm font-medium text-amber-700 dark:text-amber-400">
           <AlertTriangle className="w-4 h-4" />
-          Disclaimer — Oceans Symphony is not a medical product
+          Disclaimer — Apeiron Zetta is not a medical product
         </summary>
         <div className="px-3 pb-3 pt-1">
           <MedicalDisclaimer compact />

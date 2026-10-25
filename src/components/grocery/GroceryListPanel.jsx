@@ -987,7 +987,7 @@ export default function GroceryListPanel({ lockedMode = false }) {
                 <span className="text-xl">🛒</span> What's this?
               </h2>
               <p className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
-                You just opened the <strong>Grocery List</strong> — a quick-access <strong>privacy screen</strong>. Tapping the screen a few times in a row covers Oceans Symphony with a real-looking grocery list, so a glance reveals nothing about your system.
+                You just opened the <strong>Grocery List</strong> — a quick-access <strong>privacy screen</strong>. Tapping the screen a few times in a row covers Apeiron Zetta with a real-looking grocery list, so a glance reveals nothing about your system.
               </p>
               <p className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
                 It's also a fully <strong>functioning list &amp; notes tool</strong> — shopping lists, wishlists, checklists, flash cards, and quick notes that save as you type. Add items, mark what you've bought or got, star frequent buys, and keep as many lists as you like. Nothing here is fake.

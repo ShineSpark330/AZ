@@ -221,7 +221,7 @@ async function saveBackupBlob(blob, filename, mode = "save", { ext = ".json" } =
     return shareFile({
       blob,
       filename,
-      title: "Oceans Symphony Backup",
+      title: "Apeiron Zetta Backup",
       dialogTitle: "Send backup file",
       // Default "share" preference for shareFile — share sheet on
       // web, share sheet on native.
@@ -272,7 +272,7 @@ async function saveBackupBlob(blob, filename, mode = "save", { ext = ".json" } =
     try {
       const handle = await window.showSaveFilePicker({
         suggestedName: filename,
-        types: [{ description: "Oceans Symphony backup", accept: { [mime]: [ext] } }],
+        types: [{ description: "Apeiron Zetta backup", accept: { [mime]: [ext] } }],
       });
       const writable = await handle.createWritable();
       await writable.write(blob);
@@ -287,7 +287,7 @@ async function saveBackupBlob(blob, filename, mode = "save", { ext = ".json" } =
   return shareFile({
     blob,
     filename,
-    title: "Oceans Symphony Backup",
+    title: "Apeiron Zetta Backup",
     dialogTitle: "Save backup file",
     // Backup callers want "save to my device", not "send to another
     // app" — anchor-download lands the file in the WebView's
@@ -1017,7 +1017,7 @@ export default function DataBackupRestore({ section = "all", onExternalFile, exp
       }
       const notes = [];
       if (failed) notes.push(`${failed} couldn't be restored`);
-      if (unreadable) notes.push(`${unreadable} zip${unreadable === 1 ? " wasn't" : "s weren't"} an Oceans Symphony files backup`);
+      if (unreadable) notes.push(`${unreadable} zip${unreadable === 1 ? " wasn't" : "s weren't"} an Apeiron Zetta files backup`);
       if (withData) notes.push(`${withData} full backup${withData === 1 ? "" : "s"} skipped — restore ${withData === 1 ? "it" : "those"} with Import from File`);
       showStatus(failed || unreadable || (withData && !restored) ? "error" : "success",
         `Restored ${restored} file${restored === 1 ? "" : "s"}.${notes.length ? ` ${notes.join("; ")}.` : ""}`);

@@ -1,4 +1,4 @@
-// Oceans Symphony — Offline-First Service Worker
+// Apeiron Zetta — Offline-First Service Worker
 // Network-First for HTML navigation (so deploys don't strand the
 // previous index.html and its now-deleted bundle URLs); Cache-First
 // for static assets; IndexedDB pass-through for /local-image/ avatar

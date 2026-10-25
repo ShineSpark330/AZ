@@ -1,4 +1,4 @@
-/* Oceans Symphony mod host — runs inside the sandboxed mod frame.
+/* Apeiron Zetta mod host — runs inside the sandboxed mod frame.
  *
  * Loaded by public/mod-host.html. The app (src/components/mods/ModFrame.jsx)
  * sends one "symphony:init" message with the mod's code, the page to draw and

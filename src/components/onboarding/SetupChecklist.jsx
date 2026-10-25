@@ -343,7 +343,7 @@ export default function SetupChecklist({ onCloseGuide, bundleProps = null }) {
         <div className="space-y-4">
           <div className="space-y-2">
             <p className="text-xs text-muted-foreground">
-              Oceans Symphony is designed to help you learn about and understand your {t.system}.
+              Apeiron Zetta is designed to help you learn about and understand your {t.system}.
               The following preset packages are categories of experiences and symptoms that can be
               worthwhile for some to keep an eye on — pick as many or as few as you would like.
             </p>

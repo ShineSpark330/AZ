@@ -1,7 +1,7 @@
 // OpenPlural v0.1 exporter — the inverse of src/lib/openPlural.js (the
 // importer). Produces a portable .zip (manifest.json + openplural.json +
 // media/) that other OpenPlural apps (PluralSpace, etc.) can read, and that
-// re-imports cleanly into Oceans Symphony itself: the importer dedups on
+// re-imports cleanly into Apeiron Zetta itself: the importer dedups on
 // `op_id`, so every record we write reuses the local record's existing
 // `op_id` when it has one (records that came in via an OpenPlural import) and
 // mints a fresh `crypto.randomUUID()` otherwise. Round-trip invariant:

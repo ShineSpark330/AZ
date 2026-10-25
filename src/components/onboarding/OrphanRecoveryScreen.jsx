@@ -92,7 +92,7 @@ export default function OrphanRecoveryScreen({ candidates, onSetupNew, overExist
       const res = await shareFile({
         blob: new Blob([candidate.raw], { type: "application/json" }),
         filename: `oceans-symphony-recovered-${date}.json`,
-        title: "Oceans Symphony recovered data",
+        title: "Apeiron Zetta recovered data",
         dialogTitle: "Save recovered data",
       });
       if (res?.result === "failed") {

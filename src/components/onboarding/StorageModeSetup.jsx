@@ -759,9 +759,9 @@ export default function StorageModeSetup({ mode, onComplete, allowOrphans = fals
           </div>
         ) : (
           <div className="flex flex-col items-center mb-5">
-            <img src="/logo.png" className="w-16 h-16 object-contain rounded-2xl mb-4" alt="Oceans Symphony" />
+            <img src="/logo.png" className="w-16 h-16 object-contain rounded-2xl mb-4" alt="Apeiron Zetta" />
             <h2 className="font-display text-2xl font-semibold text-foreground text-center">
-              Welcome to Oceans Symphony
+              Welcome to Apeiron Zetta
             </h2>
             <p className="text-sm text-foreground/90 leading-relaxed text-center mt-3">
               A companion app for dissociative systems
@@ -801,7 +801,7 @@ export default function StorageModeSetup({ mode, onComplete, allowOrphans = fals
                 </div>
                 <div className="space-y-1">
                   <p className="font-medium text-foreground">🚫 What's never stored</p>
-                  <p>No analytics, no crash telemetry, no usage tracking, no advertising IDs. There's no Oceans Symphony account and no server-side copy of your data — even crashes stay on your device unless you choose to email a log.</p>
+                  <p>No analytics, no crash telemetry, no usage tracking, no advertising IDs. There's no Apeiron Zetta account and no server-side copy of your data — even crashes stay on your device unless you choose to email a log.</p>
                 </div>
                 <div className="space-y-1">
                   <p className="font-medium text-foreground">🌐 What can leave this device (all opt-in)</p>
@@ -813,7 +813,7 @@ export default function StorageModeSetup({ mode, onComplete, allowOrphans = fals
                 </div>
                 <div className="space-y-1">
                   <p className="font-medium text-foreground">🤖 Transparency</p>
-                  <p>Oceans Symphony is <strong className="text-foreground">vibe-coded</strong> — built with AI assistance. It is a work in progress, shared in good faith. We do our best but cannot guarantee it is bug-free.</p>
+                  <p>Apeiron Zetta is <strong className="text-foreground">vibe-coded</strong> — built with AI assistance. It is a work in progress, shared in good faith. We do our best but cannot guarantee it is bug-free.</p>
                 </div>
                 <p className="text-amber-600 dark:text-amber-400 font-medium pt-1">
                   🌊 Free and open source, shared by a DID system to fill a void in the community.{" "}

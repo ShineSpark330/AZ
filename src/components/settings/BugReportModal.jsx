@@ -94,7 +94,7 @@ export default function BugReportModal({ open, onClose }) {
   })();
 
   const mailUrl = (() => {
-    const subj = encodeURIComponent(`Oceans Symphony bug — ${summary.trim() || "(no summary)"}`);
+    const subj = encodeURIComponent(`Apeiron Zetta bug — ${summary.trim() || "(no summary)"}`);
     const body = encodeURIComponent(buildBody());
     return `mailto:${FALLBACK_EMAIL}?subject=${subj}&body=${body}`;
   })();

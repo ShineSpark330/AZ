@@ -1,6 +1,6 @@
 // Native (Capacitor Android) Firebase Cloud Messaging registration, so a
 // friend's fronting change can push to this device INSTANTLY — even when the
-// Oceans Symphony app is fully closed.
+// Apeiron Zetta app is fully closed.
 //
 // Why this exists separately from pushRegistration.js:
 //   - Web / TWA targets use Web Push (pushRegistration.js). The Capacitor

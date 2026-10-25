@@ -18,7 +18,7 @@ export default function TermsSetupWizard({ open, onFinish, existingSettingsId })
 
   const steps = [
     {
-      title: "Welcome to Oceans Symphony 💜",
+      title: "Welcome to Apeiron Zetta 💜",
       subtitle: "Let's set your language first",
       icon: "🗣️",
       color: "from-violet-500/20 to-purple-500/20",
@@ -38,7 +38,7 @@ export default function TermsSetupWizard({ open, onFinish, existingSettingsId })
       render: () => (
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground leading-relaxed">
-            Oceans Symphony adapts to the words your system prefers — pick a
+            Apeiron Zetta adapts to the words your system prefers — pick a
             preset or define your own. You can change everything later in
             Settings → Profile → Terminology.
           </p>
@@ -57,7 +57,7 @@ export default function TermsSetupWizard({ open, onFinish, existingSettingsId })
                 onChange={(e) => setAckChecked(e.target.checked)}
               />
               <span>
-                I understand Oceans Symphony is <strong>not a medical product</strong> — it doesn't
+                I understand Apeiron Zetta is <strong>not a medical product</strong> — it doesn't
                 diagnose, treat, or replace care from a professional.
               </span>
             </label>

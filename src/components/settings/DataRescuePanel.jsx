@@ -70,7 +70,7 @@ export default function DataRescuePanel({ onClose }) {
       const res = await shareFile({
         blob: new Blob([b.raw], { type: "application/json" }),
         filename: `oceans-symphony-storage-${date}.json`,
-        title: "Oceans Symphony data",
+        title: "Apeiron Zetta data",
         dialogTitle: "Save data copy",
       });
       if (res?.result === "failed") setStatus({ type: "error", text: `Save failed${res.error ? `: ${res.error}` : ""}` });

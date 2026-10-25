@@ -829,12 +829,12 @@ const handleNotifClick = (mentionLog) => {
             to="/"
             onClick={goHomeClean}
             className="flex items-center gap-2.5 select-none"
-            aria-label="Oceans Symphony home"
+            aria-label="Apeiron Zetta home"
           >
             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
               <img src="/logo.png" className="w-7 h-7 object-contain rounded-md" alt="logo" />
             </div>
-            <span className="font-display text-lg font-semibold tracking-tight text-foreground">Oceans Symphony</span>
+            <span className="font-display text-lg font-semibold tracking-tight text-foreground">Apeiron Zetta</span>
           </Link>
 
           <nav className="flex items-center gap-1" aria-label="Main navigation">
@@ -929,7 +929,7 @@ const handleNotifClick = (mentionLog) => {
             className="a11y-keep-truncate absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 select-none px-2 max-w-[60%] truncate"
           >
             <span className="a11y-header-title font-display text-lg font-normal tracking-tight text-foreground">
-              Oceans Symphony
+              Apeiron Zetta
             </span>
           </button>
 

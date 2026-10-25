@@ -33,7 +33,7 @@ function nextImmediateId() {
 // downgrade an existing channel's importance/sound/vibration after the
 // user has installed the app, so picking sensible defaults up front
 // matters. Users can override per-channel afterwards in system
-// Settings → Apps → Oceans Symphony → Notifications.
+// Settings → Apps → Apeiron Zetta → Notifications.
 // Two channels, two purposes:
 //
 // REMINDERS_CHANNEL_ID — IMPORTANCE_HIGH. Sound, vibration, heads-up
@@ -51,7 +51,7 @@ function nextImmediateId() {
 // CREATION TIME and refuses to let the app upgrade them after
 // install. createChannel called on an existing channel id is a
 // no-op for those fields. Users CAN still customise each channel
-// from system Settings → Apps → Oceans Symphony → Notifications →
+// from system Settings → Apps → Apeiron Zetta → Notifications →
 // <channel name>. We just want sensible defaults on first run.
 // NOTE on the "-v2" suffix: Android pins a channel's importance / sound /
 // vibration at CREATION time and silently ignores any later change to an
@@ -209,7 +209,7 @@ export async function nativeNotificationDiagnostics() {
   out.push({
     ok: granted,
     label: `Notification permission: ${granted ? "granted" : "not granted"}`,
-    detail: granted ? null : "Tap Enable to request permission. If you see no prompt, Android may have permanently denied — open the system Settings → Apps → Oceans Symphony → Notifications and allow.",
+    detail: granted ? null : "Tap Enable to request permission. If you see no prompt, Android may have permanently denied — open the system Settings → Apps → Apeiron Zetta → Notifications and allow.",
   });
   if (!granted) return out;
 

@@ -340,7 +340,7 @@ export const CURRICULUM = [
           { type: "p", text: "For systems, self-compassion extends to all parts and alters. Each part developed for a reason — to protect, to survive, to carry something the system couldn't hold all at once." },
           { type: "p", text: "Even the parts that seem to cause trouble, or that feel hard to be with — they're doing what they believe will help. Sometimes the method is painful, but the intention underneath it often comes from a place of trying to protect." },
           { type: "p", text: "Compassion for the system doesn't mean forcing all parts to agree or feel the same. It means being curious about what each part needs, and looking for ways to meet those needs that work for everyone." },
-          { type: "note", text: "This is Oceans Symphony content — specific to plural systems. If this doesn't apply to you, that's completely okay." },
+          { type: "note", text: "This is Apeiron Zetta content — specific to plural systems. If this doesn't apply to you, that's completely okay." },
         ],
         exercise: {
           id: "m5_t3_parts",

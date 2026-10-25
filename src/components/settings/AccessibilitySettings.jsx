@@ -201,7 +201,7 @@ export default function AccessibilitySettings() {
       <div className="rounded-xl bg-muted/30 border border-border/40 px-4 py-3 space-y-1.5 text-xs text-muted-foreground">
         <p className="font-semibold text-foreground text-sm">Screen reader support</p>
         <p>
-          Oceans Symphony works with your device's built-in screen reader (VoiceOver on iOS/macOS,
+          Apeiron Zetta works with your device's built-in screen reader (VoiceOver on iOS/macOS,
           TalkBack on Android, or NVDA/JAWS on Windows). Enable it from your device's accessibility settings.
         </p>
         <p>

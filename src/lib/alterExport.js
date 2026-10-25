@@ -225,7 +225,7 @@ export function buildAlterListExportHtml({ alters = [], groupsById = {}, groups 
 </style></head>
 <body><div class="doc">
   <h1>${docTitle}</h1>
-  <p class="sub">${alters.length} member${alters.length === 1 ? "" : "s"} &middot; exported from Oceans Symphony${options.anonymize ? " &middot; anonymized" : ""}</p>
+  <p class="sub">${alters.length} member${alters.length === 1 ? "" : "s"} &middot; exported from Apeiron Zetta${options.anonymize ? " &middot; anonymized" : ""}</p>
   ${body}
 </div></body></html>`;
 }
@@ -242,7 +242,7 @@ export async function buildAlterListPdf({ alters = [], groupsById = {}, groups =
   doc.setFont("helvetica", "bold"); doc.setFontSize(18); doc.setTextColor(30, 41, 59);
   doc.text(options.systemName ? `${options.systemName} — Members` : "Members", M, y + 2); y += 9;
   doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(120, 130, 145);
-  doc.text(`${alters.length} member${alters.length === 1 ? "" : "s"} · exported from Oceans Symphony${options.anonymize ? " · anonymized" : ""}`, M, y); y += 8;
+  doc.text(`${alters.length} member${alters.length === 1 ? "" : "s"} · exported from Apeiron Zetta${options.anonymize ? " · anonymized" : ""}`, M, y); y += 8;
 
   for (const item of buildExportItems(alters, options, groupsById, groups, allAlters)) {
     const indent = Math.min(item.depth, 8) * 5; // clamp visual indent

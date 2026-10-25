@@ -47,8 +47,8 @@ const config: CapacitorConfig = {
   // PRODUCT_BUNDLE_IDENTIFIER in ios/App/App.xcodeproj (Capacitor only
   // reads appId at `cap add` time; the Xcode project owns it after
   // that). See docs/ios-setup.md.
-  appId: 'app.oceans_symphony.twa',
-  appName: 'Oceans Symphony',
+  appId: 'app.apeironzetta.z330',
+  appName: 'Apeiron Zetta',
   webDir: 'dist',
   server: {
     androidScheme: 'https',
@@ -100,7 +100,7 @@ const config: CapacitorConfig = {
     // aggressively under battery optimisation; nothing we can do
     // about that from JS.
     BackgroundRunner: {
-      label: 'app.oceans_symphony.twa.friends',
+      label: 'app.apeironzetta.z330.friends',
       src: 'runners/friends-poll.js',
       event: 'checkFriends',
       repeat: true,
