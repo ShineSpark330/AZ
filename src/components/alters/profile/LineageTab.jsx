@@ -1,0 +1,319 @@
+import { confirm } from "@/components/shared/ConfirmDialog";
+import React, { useState, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { localEntities, base44 } from "@/api/base44Client";
+import { format } from "date-fns";
+import { GitMerge, Split, MoonStar, Sunrise, Sparkles, RefreshCw, Plus, ArrowRight, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Link } from "react-router-dom";
+import { cn } from "@/lib/utils";
+import RecordSystemChangeModal from "@/components/alters/RecordSystemChangeModal";
+import { useTerms } from "@/lib/useTerms";
+
+const TYPE_META = {
+  fusion:    { label: "Fusion",    icon: GitMerge, color: "text-violet-500", bg: "bg-violet-500/10 border-violet-500/20" },
+  split:     { label: "Split",     icon: Split,    color: "text-blue-500",   bg: "bg-blue-500/10 border-blue-500/20" },
+  dormancy:  { label: "Dormancy",  icon: MoonStar, color: "text-indigo-500", bg: "bg-indigo-500/10 border-indigo-500/20" },
+  return:    { label: "Return",    icon: Sunrise,  color: "text-amber-500",  bg: "bg-amber-500/10 border-amber-500/20" },
+  emergence: { label: "Emergence", icon: Sparkles, color: "text-emerald-500", bg: "bg-emerald-500/10 border-emerald-500/20" },
+  reformation: { label: "Reformation", icon: RefreshCw, color: "text-teal-500", bg: "bg-teal-500/10 border-teal-500/20" },
+};
+
+function AlterPill({ alter }) {
+  if (!alter) return null;
+  const color = alter.color || "#9333ea";
+  return (
+    <Link
+      to={`/alter/${alter.id}`}
+      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border hover:opacity-80 transition-opacity text-foreground"
+      style={{ borderColor: color, backgroundColor: `${color}22` }}
+    >
+      <div className="w-3 h-3 rounded-full flex-shrink-0 ring-1 ring-background" style={{ backgroundColor: color }} />
+      {alter.name}
+    </Link>
+  );
+}
+
+function EventCard({ event, altersById, onDelete }) {
+  // Fallback to fusion ONLY for truly unknown types. Emergence is now
+  // its own entry — previously emergence events rendered as "Fusion"
+  // because the type wasn't in the map.
+  const meta = TYPE_META[event.type] || TYPE_META.fusion;
+  const Icon = meta.icon;
+
+  const sourceAlters = (event.source_alter_ids || []).map(id => altersById[id]).filter(Boolean);
+  const resultAlters = (event.result_alter_ids || []).map(id => altersById[id]).filter(Boolean);
+
+  // For dormancy / return / emergence, "source" and "result" describe
+  // the same alters — collapse the arrow display so we don't render the
+  // same chips twice.
+  const showResult = event.type !== "dormancy" && event.type !== "return" && event.type !== "emergence" && event.type !== "reformation";
+
+  const fusionLabel = event.fusion_type === "absorption" ? "Absorption"
+    : event.fusion_type === "new_formation" ? "New Formation"
+    : null;
+
+  return (
+    <div className={cn("rounded-xl border p-3 space-y-2.5", meta.bg)}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Icon className={cn("w-4 h-4 flex-shrink-0", meta.color)} />
+          <div>
+            <span className={cn("text-sm font-semibold", meta.color)}>{meta.label}</span>
+            {fusionLabel && <span className="ml-1.5 text-xs text-muted-foreground">· {fusionLabel}</span>}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span className="text-xs text-muted-foreground">{event.year_only ? format(new Date(event.date), "yyyy") : format(new Date(event.date), "MMM d, yyyy")}</span>
+          <button
+            type="button"
+            onClick={() => onDelete(event.id)}
+            className="text-muted-foreground hover:text-destructive transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex flex-wrap gap-1">
+          {sourceAlters.map(a => <AlterPill key={a.id} alter={a} />)}
+        </div>
+        {showResult && resultAlters.length > 0 && (
+          <>
+            <ArrowRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+            <div className="flex flex-wrap gap-1">
+              {resultAlters.map(a => <AlterPill key={a.id} alter={a} />)}
+            </div>
+          </>
+        )}
+      </div>
+
+      {event.what_changed && (
+        <p className="text-xs text-muted-foreground whitespace-pre-wrap"><span className="font-medium">What changed:</span> {event.what_changed}</p>
+      )}
+      {event.new_name && (
+        <p className="text-xs text-muted-foreground"><span className="font-medium">New name:</span> {event.previous_name ? `${event.previous_name} → ` : ""}{event.new_name}</p>
+      )}
+      {event.cause && (
+        <p className="text-xs text-muted-foreground"><span className="font-medium">{event.type === "reformation" ? "Trigger:" : "Cause:"}</span> {event.cause}</p>
+      )}
+      {event.notes && (
+        <p className="text-xs text-muted-foreground whitespace-pre-wrap">{event.notes}</p>
+      )}
+    </div>
+  );
+}
+
+function ConnectionsMap({ alterId, events, altersById }) {
+  const t = useTerms();
+  // Walk only events that describe a real before → after transition.
+  // Dormancy / return record one alter with the same id in both lists
+  // (no lineage relationship). Emergence stores every co-emerging alter
+  // in BOTH source and result (they appeared together, not from each
+  // other) — including them would falsely render co-emerged alters as
+  // both "From" predecessors AND "Became" successors of this alter.
+  const isTransition = (e) =>
+    e.type !== "dormancy" && e.type !== "return" && e.type !== "emergence" && e.type !== "reformation";
+
+  // Predecessors: alters in source_alter_ids where this alter is in result_alter_ids
+  const predecessorIds = useMemo(() => {
+    const ids = new Set();
+    events.forEach(e => {
+      if (!isTransition(e)) return;
+      if ((e.result_alter_ids || []).includes(alterId)) {
+        (e.source_alter_ids || []).forEach(id => { if (id !== alterId) ids.add(id); });
+      }
+    });
+    return [...ids];
+  }, [alterId, events]);
+
+  // Successors: alters in result_alter_ids where this alter is in source_alter_ids
+  const successorIds = useMemo(() => {
+    const ids = new Set();
+    events.forEach(e => {
+      if (!isTransition(e)) return;
+      if ((e.source_alter_ids || []).includes(alterId)) {
+        (e.result_alter_ids || []).forEach(id => { if (id !== alterId) ids.add(id); });
+      }
+    });
+    return [...ids];
+  }, [alterId, events]);
+
+  const thisAlter = altersById[alterId];
+  if (!thisAlter) return null;
+  if (predecessorIds.length === 0 && successorIds.length === 0) return null;
+
+  const color = thisAlter.color || "#9333ea";
+
+  return (
+    <div className="rounded-xl border border-border/60 bg-card p-3 space-y-2">
+      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Connections</p>
+      <div className="flex items-start gap-2 flex-wrap">
+        {predecessorIds.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">From</span>
+            <div className="flex flex-wrap gap-1">
+              {predecessorIds.map(id => altersById[id] && <AlterPill key={id} alter={altersById[id]} />)}
+            </div>
+          </div>
+        )}
+        {predecessorIds.length > 0 && (
+          <div className="flex items-center self-center mt-4">
+            <ArrowRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+          </div>
+        )}
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground">This {t.alter}</span>
+          <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border text-foreground"
+            style={{ borderColor: color, backgroundColor: `${color}33`, outline: `2px solid ${color}55`, outlineOffset: "1px" }}>
+            <div className="w-3 h-3 rounded-full flex-shrink-0 ring-1 ring-background" style={{ backgroundColor: color }} />
+            {thisAlter.name}
+          </div>
+        </div>
+        {successorIds.length > 0 && (
+          <div className="flex items-center self-center mt-4">
+            <ArrowRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+          </div>
+        )}
+        {successorIds.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">Became</span>
+            <div className="flex flex-wrap gap-1">
+              {successorIds.map(id => altersById[id] && <AlterPill key={id} alter={altersById[id]} />)}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function LineageTab({ alterId }) {
+  const queryClient = useQueryClient();
+  const [modalOpen, setModalOpen] = useState(false);
+  const t = useTerms();
+
+  const { data: allEvents = [] } = useQuery({
+    queryKey: ["systemChangeEvents"],
+    queryFn: () => localEntities.SystemChangeEvent.list(),
+  });
+
+  const { data: alters = [] } = useQuery({
+    queryKey: ["alters"],
+    queryFn: () => localEntities.Alter.list(),
+  });
+
+  // Relationships are stored on the cloud-synced AlterRelationship entity
+  // (not the local lineage events). Fetching both lets the lineage tab
+  // show "who this alter is connected to and how" alongside the system-
+  // change history.
+  const { data: relationships = [] } = useQuery({
+    queryKey: ["alterRelationships"],
+    queryFn: () => base44.entities.AlterRelationship.list(),
+  });
+
+  const altersById = useMemo(() => Object.fromEntries(alters.map(a => [a.id, a])), [alters]);
+
+  // All relationships that involve this alter, normalised so the "other"
+  // alter and the directional label are easy to render.
+  const myRelationships = useMemo(() => {
+    return (relationships || [])
+      .filter(r => r.alter_id_a === alterId || r.alter_id_b === alterId)
+      .map(r => {
+        const isA = r.alter_id_a === alterId;
+        const other = altersById[isA ? r.alter_id_b : r.alter_id_a];
+        return { ...r, other, _selfIsA: isA };
+      })
+      .filter(r => r.other);
+  }, [relationships, alterId, altersById]);
+
+  const relatedEvents = useMemo(() =>
+    allEvents
+      .filter(e =>
+        !e.hidden && (
+          (e.source_alter_ids || []).includes(alterId) ||
+          (e.result_alter_ids || []).includes(alterId)
+        )
+      )
+      .sort((a, b) => new Date(b.date) - new Date(a.date)),
+    [allEvents, alterId]
+  );
+
+  async function handleDelete(eventId) {
+    if (!(await confirm({ title: "Delete this event?", body: "This can't be undone.", confirmLabel: "Delete", destructive: true }))) return;
+    await localEntities.SystemChangeEvent.delete(eventId);
+    queryClient.invalidateQueries({ queryKey: ["systemChangeEvents"] });
+  }
+
+  return (
+    <div className="space-y-4 pb-8 rounded-2xl" data-pf-surface>
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Lineage</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">{t.System} change events involving this {t.alter}</p>
+        </div>
+        <Button size="sm" variant="outline" onClick={() => setModalOpen(true)}>
+          <Plus className="w-3.5 h-3.5 mr-1" /> Record Event
+        </Button>
+      </div>
+
+      {/* Connections map */}
+      {relatedEvents.length > 0 && (
+        <ConnectionsMap alterId={alterId} events={relatedEvents} altersById={altersById} />
+      )}
+
+      {/* Relationships — separate from lineage events. These are the
+          per-pair relationships the user has defined (e.g. "trauma
+          holder for", "protector of", "twin"), independent of any
+          fusion/split history. Sourced from the cloud-synced
+          AlterRelationship entity. */}
+      {myRelationships.length > 0 && (
+        <div className="rounded-xl border border-border/60 bg-card p-3 space-y-2">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Relationships</p>
+          <ul className="space-y-1.5">
+            {myRelationships.map(r => {
+              // Render the label so it reads naturally regardless of
+              // which side of the relationship this alter is on.
+              const label = r.relationship_type || "related to";
+              const arrow = r._selfIsA
+                ? (r.direction === "b_to_a" ? "←" : (r.direction === "a_to_b" ? "→" : "↔"))
+                : (r.direction === "b_to_a" ? "→" : (r.direction === "a_to_b" ? "←" : "↔"));
+              return (
+                <li key={r.id} className="flex items-center gap-2 text-xs flex-wrap">
+                  <span className="text-muted-foreground">{label}</span>
+                  <span className="text-muted-foreground/60">{arrow}</span>
+                  <AlterPill alter={r.other} />
+                  {r.notes && <span className="text-muted-foreground/70 italic ml-1 line-clamp-1">— {r.notes}</span>}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {/* Event list */}
+      {relatedEvents.length === 0 ? (
+        <div className="text-center py-10">
+          <GitMerge className="w-8 h-8 text-muted-foreground/40 mx-auto mb-3" />
+          <p className="text-sm text-muted-foreground">No lineage events recorded yet.</p>
+          <p className="text-xs text-muted-foreground mt-1">Record a fusion, split, dormancy, return, or reformation event to build this {t.alter}'s history.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {relatedEvents.map(e => (
+            <EventCard key={e.id} event={e} altersById={altersById} onDelete={handleDelete} />
+          ))}
+        </div>
+      )}
+
+      {modalOpen && (
+        <RecordSystemChangeModal
+          open={modalOpen}
+          onClose={() => setModalOpen(false)}
+          preselectedAlterIds={[alterId]}
+        />
+      )}
+    </div>
+  );
+}

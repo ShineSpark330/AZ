@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
+    <!-- minimum-scale=1: a stray two-finger gesture used to pinch the whole
+         app OUT, leaving everything shrunk into the top-left corner with the
+         phone wallpaper around it — and because this is a single-page app it
+         survived navigating between pages (tester report, after visiting
+         System Chat). Surfaces that own pinch — planner, timeline, maps —
+         preventDefault their own gestures; everywhere else had nothing to
+         stop it. Zooming IN is deliberately still allowed, so pinch-to-
+         magnify keeps working for low vision. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0A0E17" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#F0F9FF" media="(prefers-color-scheme: light)" />
+    <meta name="description" content="Apeiron Zetta — a local-first plural system tracking app. All data stays on your device." />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Apeiron" />
+    <link rel="apple-touch-icon" href="/icon-512.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>Apeiron Zetta</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- White-screen watchdog (tester report: "occasionally the whole screen
+         goes white while loading", usually after a long idle or a cache
+         clear). Two known shapes: (a) the JS bundle never executes (stale
+         cached HTML pointing at deleted bundles, WebView hiccup) — #root
+         stays empty forever; (b) the boot sequence hangs (IndexedDB open can
+         wedge in Chrome/WebView after a crash or cache clear) — the spinner
+         spins forever, which in light theme reads as a white screen. This
+         inline script runs regardless of whether the bundle does: after 12s
+         without the app signalling __OS_ALIVE (set when boot completes), an
+         empty #root triggers ONE automatic reload (sessionStorage-guarded
+         against loops); otherwise a non-destructive overlay offers Reload,
+         and removes itself if the app comes alive late.
+
+         COUPLED TO THE CSP — DO NOT EDIT THE SCRIPT BELOW WITHOUT REHASHING.
+         The app's Content-Security-Policy is script-src 'self' plus the
+         sha256 of this script's EXACT text, so changing so much as a space
+         invalidates the hash and the browser silently blocks the watchdog —
+         which is how it sat dead on every build target (web, TWA, Capacitor,
+         Electron) until v0.239.12. The hash lives in TWO places that must
+         stay in sync: CSP_POLICY in vite.config.js (meta tag, covers the
+         native + desktop builds) and the Content-Security-Policy header in
+         vercel.json (the real header on the web deploy). `npm run build`
+         fails with the correct new hash if either drifts. -->
+    <script>
+      (function () {
+        setTimeout(function () {
+          if (window.__OS_ALIVE) return;
+          var root = document.getElementById('root');
+          var empty = !root || root.childElementCount === 0;
+          try {
+            var KEY = 'symphony_whitescreen_reload_once';
+            var last = Number(sessionStorage.getItem(KEY) || 0);
+            if (empty && Date.now() - last > 60000) {
+              sessionStorage.setItem(KEY, String(Date.now()));
+              location.reload();
+              return;
+            }
+          } catch (e) { /* sessionStorage blocked — fall through to overlay */ }
+          var el = document.createElement('div');
+          el.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:#0A0E17;color:#e2e8f0;font-family:system-ui,sans-serif;text-align:center;padding:24px;';
+          el.innerHTML = '<div style="font-size:17px;font-weight:600">Taking longer than usual to load</div>'
+            + '<div style="font-size:13px;opacity:.8;max-width:320px;line-height:1.5">Your data is safe on this device. Reloading usually fixes this.</div>'
+            + '<button style="margin-top:6px;padding:10px 28px;border-radius:9999px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;font-size:14px;cursor:pointer">Reload</button>';
+          el.querySelector('button').onclick = function () { location.reload(); };
+          document.body.appendChild(el);
+          var iv = setInterval(function () {
+            if (window.__OS_ALIVE) { clearInterval(iv); el.remove(); }
+          }, 1000);
+        }, 12000);
+      })();
+    </script>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
