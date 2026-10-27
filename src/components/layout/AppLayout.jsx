@@ -1,0 +1,1241 @@
+import React, { useRef, useEffect, useLayoutEffect, useState, useMemo, Suspense } from "react";
+import { useIsWide } from "@/lib/useIsWide";
+import { Outlet, Link, useLocation, useNavigate } from "react-router-dom";
+import { ShoppingCart, LayoutGrid, ChevronLeft } from "lucide-react";
+import { useTerms } from "@/lib/useTerms";
+import { cn } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
+import { base44 } from "@/api/base44Client";
+import NotificationPopups from "@/components/dashboard/NotificationPopups";
+import FloatingGroundingButton from "@/components/grounding/FloatingGroundingButton";
+import InterruptCheckNote from "@/components/needs/InterruptCheckNote";
+import ActivityPromptsHost from "@/components/activities/ActivityPromptsHost";
+import GroceryListPanel from "@/components/grocery/GroceryListPanel";
+import FrontConflictCard from "@/components/sync/FrontConflictCard";
+import ErrorBoundary from "@/components/shared/ErrorBoundary";
+import { recordCrash } from "@/lib/lastCrash";
+import QuickActionsHost from "@/components/dashboard/QuickActionsHost";
+import { useAutoDeviceSync } from "@/hooks/useAutoDeviceSync";
+import HeaderWaveBlock from "@/components/layout/HeaderWaveBlock";
+import HeaderPageMenu from "@/components/layout/HeaderPageMenu";
+import SystemBanner from "@/components/system/SystemBanner";
+import useTripleTapPanic from "@/hooks/useTripleTapPanic";
+import useFrontSessionSweep from "@/hooks/useFrontSessionSweep";
+import useRefreshOnResume from "@/hooks/useRefreshOnResume";
+import useFriendsLiveRefresh from "@/hooks/useFriendsLiveRefresh";
+import { useDailyCheckInOnOpen } from "@/hooks/useDailyCheckInOnOpen";
+import usePersistentNotifications from "@/hooks/usePersistentNotifications";
+import SidebarNav, { buildSidebarGroups } from "@/components/layout/SidebarNav";
+import GlobalPullToRefresh from "@/components/layout/GlobalPullToRefresh";
+import SystemSwitcherSheetHost from "@/components/systems/SystemSwitcherSheet";
+import GlobalSongHost from "@/components/alters/GlobalSongHost";
+import PackRestoreBar from "@/components/dashboard/PackRestoreBar";
+// Lazy: only pulled into the bundle for the users who need it (existing
+// installs with legacy data-URI images). Fresh installs never load it.
+const LazyBlobStorageMigrationModal = React.lazy(() => import("@/components/onboarding/BlobStorageMigrationModal"));
+import { ALL_PAGES, DEFAULT_CONFIG, applySidebarConfig } from "@/utils/navigationConfig";
+import { ModNavSync, useModPagesVersion } from "@/lib/mods/registry";
+import { useExperimentalOn } from "@/lib/experimentalFeatures";
+import { useRemindersScheduler, usePendingReminderInstances } from "@/lib/remindersScheduler";
+import { useFriendsFrontSync } from "@/lib/useFriendsFrontSync";
+import ReminderToast from "@/components/reminders/ReminderToast";
+import { Bell } from "lucide-react";
+import useSwipeBack from "@/hooks/useSwipeBack";
+import FeatureTour from "@/components/onboarding/FeatureTour";
+import PageTutorialBanner from "@/components/onboarding/PageTutorialBanner";
+import { useTheme } from "@/lib/ThemeContext";
+import { setAccessibilityFontFamily, setAccessibilityFontSize, setAccessibilityHeadingFont } from "@/lib/useAccessibility";
+import AnnouncementBanner from "@/components/layout/AnnouncementBanner";
+import LandscapeHintBanner from "@/components/layout/LandscapeHintBanner";
+import A11yModeBanner from "@/components/layout/A11yModeBanner";
+import PreviewModeBanner from "@/components/preview/PreviewModeBanner";
+import { isPreviewActive } from "@/lib/previewMode";
+import { toast } from "sonner";
+import { getLocalIdentity, fetchFriendsList } from "@/lib/friendsApi";
+import { resolveUiV2, buildTokenVars, V2_TOKEN_DEFS } from "@/lib/uiV2";
+import { applyHomePresetToBoard } from "@/lib/homePresetParts";
+import { V2StatusLine, V2BottomChrome, V2SideRail, V2QuickDock, DisplayOptionsHost } from "@/components/v2/V2Frame";
+import { readPinnedBar } from "@/lib/barsModel";
+import { ActiveNowBubble } from "@/components/v2/ActiveNow";
+import { UI_V2_ENABLED } from "@/lib/featureFlags";
+import { safeInternalRoute } from "@/lib/safeRoute";
+
+
+const TAB_ROOTS = ["/", "/Home", "/system-checkin", "/journals", "/tasks"];
+
+function isTabRoot(pathname) {
+  return TAB_ROOTS.some((r) => pathname === r) || pathname === "/settings";
+}
+
+// hex (#rgb/#rrggbb/#rrggbbaa) → "h s% l%" triplet for hsl(var(--primary)) consumers.
+function hexToHslTripletSafe(hex) {
+  const m = String(hex || "").trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+  if (!m) return null;
+  let h6 = m[1]; if (h6.length === 3) h6 = h6.split("").map((c) => c + c).join(""); if (h6.length === 8) h6 = h6.slice(0, 6);
+  const r = parseInt(h6.slice(0, 2), 16) / 255, g = parseInt(h6.slice(2, 4), 16) / 255, b = parseInt(h6.slice(4, 6), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b); let hue = 0, sat = 0; const lum = (max + min) / 2;
+  if (max !== min) { const d = max - min; sat = lum > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) hue = (g - b) / d + (g < b ? 6 : 0); else if (max === g) hue = (b - r) / d + 2; else hue = (r - g) / d + 4; hue /= 6; }
+  return `${Math.round(hue * 360)} ${Math.round(sat * 100)}% ${Math.round(lum * 100)}%`;
+}
+
+// Hosts mounted on every page sit outside the page's own boundary, so a
+// render error in one would blank the whole app (and come straight back on
+// "Go to home screen"). Each is wrapped so it just disappears instead; the
+// trace is still kept for the bug-report form.
+function QuietBoundary({ name, children }) {
+  return (
+    <ErrorBoundary
+      fallback={() => null}
+      onError={(error, info) => recordCrash(error, info, `host:${name}`)}
+    >
+      {children}
+    </ErrorBoundary>
+  );
+}
+
+export default function AppLayout() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const terms = useTerms();
+  // Refetch stale data + re-derive "now" whenever the app returns to the
+  // foreground (fixes the "opened the app but it shows yesterday / a plan
+  // that should be active isn't" staleness).
+  useRefreshOnResume();
+  // Device sync (files only, no server). Self-disables unless a folder is
+  // configured and the platform can reach one — see the hook's header for
+  // why it lives here and not in App.jsx's boot path.
+  useAutoDeviceSync();
+
+
+  // The app grid is hosted by the home canvas, so reaching it from
+  // elsewhere means parking a request the canvas consumes when it mounts.
+  const openAppGrid = () => {
+    if (location.pathname === "/") {
+      window.dispatchEvent(new CustomEvent("os-classic-open-apps"));
+    } else {
+      try { sessionStorage.setItem("symphony_classic_open-apps", "1"); } catch { /* non-fatal */ }
+      navigate("/");
+    }
+  };
+
+  // Pressing the logo means "take me home", nothing else. A parked
+  // app-grid request that never got consumed (the canvas didn't mount,
+  // or the board was showing) otherwise sat in sessionStorage and popped
+  // the app list open the next time home was reached — which read as the
+  // logo doing two things at once.
+  const goHomeClean = () => {
+    try {
+      sessionStorage.removeItem("symphony_classic_open-apps");
+      sessionStorage.removeItem("symphony_v2_open-apps");
+    } catch { /* non-fatal */ }
+  };
+  // Refresh the friends list when a front-change push arrives on any page
+  // (the Friends page's own listener only runs while it's mounted).
+  useFriendsLiveRefresh();
+  // Header auto-hide on scroll was a recurring source of confusion —
+  // even with a landscape-only gate, edge cases let it fire in
+  // portrait. Reverted to a permanently-pinned header. If we want
+  // landscape-only auto-hide back, it should be an opt-in
+  // accessibility toggle, not a default behaviour.
+  // Push front-status snapshots to the Friends server whenever the active
+  // front changes — covers all paths (modal, dashboard hold, alters swipe).
+  useFriendsFrontSync();
+
+  // One Friends identity shared across all systems: on each load (so it also
+  // runs after switching systems), pull the app-level shared identity into the
+  // active system — or seed it from this system the first time. Best-effort.
+  useEffect(() => {
+    import("@/lib/friendsApi").then((m) => m.syncSharedFriendIdentity?.()).catch(() => {});
+  }, []);
+
+  // One-time post-onboarding redirect. The first-run "Set up encryption" link
+  // lives outside the Router, so instead of navigating it drops a localStorage
+  // flag; we honour it here once and land the user on Settings → Data & privacy
+  // (where Storage & encryption lives). Hash opens the section via Settings'
+  // SectionsAccordion.
+  useEffect(() => {
+    if (localStorage.getItem("symphony_onboard_goto_encryption") === "1") {
+      localStorage.removeItem("symphony_onboard_goto_encryption");
+      navigate("/settings#data");
+    }
+     
+  }, []);
+
+  // v0.86.5: probe for legacy string entries in the image store on boot.
+  // If any exist AND the user hasn't deferred / completed the migration,
+  // show the blob-storage migration modal. Cheap probe; runs once per
+  // session and short-circuits on the persisted `_blob_migration_v1` flag.
+  const [showBlobMigration, setShowBlobMigration] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { shouldShowBlobMigration } = await import("@/components/onboarding/BlobStorageMigrationModal");
+        const need = await shouldShowBlobMigration();
+        if (!cancelled && need) setShowBlobMigration(true);
+      } catch { /* skip on error */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  // Whether the in-app Back button should be shown (vs the menu icon).
+  // Was previously a manual increment-on-each-pathname-change counter,
+  // which mis-incremented on backward navigation and didn't reset on
+  // refresh, so the button could appear when there was actually no
+  // history to go back to — tapping it did nothing visible. We now read
+  // React Router's own history index (window.history.state.idx) which
+  // it bumps on PUSH and decrements on POP; falling back to "show menu"
+  // when idx is 0 or unavailable.
+  const [historyIdx, setHistoryIdx] = useState(() => (typeof window !== "undefined" ? (window.history.state?.idx ?? 0) : 0));
+  const [showFeatureTour, setShowFeatureTour] = useState(false);
+  // Page-scoped tour state — set by PageTutorialBanner when user taps
+  // "Show me around" on a page they haven't seen yet. Separate from the
+  // full-tour state so both can coexist (e.g. the banner shouldn't fire
+  // mid-full-tour).
+  const [pageScopedTourRoute, setPageScopedTourRoute] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  // The app drawer's list toggle (and anything else outside this layout)
+  // opens the sidebar through this event — the drawer lives inside the
+  // home canvas, far from this component's state.
+  useEffect(() => {
+    const open = () => setSidebarOpen(true);
+    window.addEventListener("os-open-sidebar", open);
+    return () => window.removeEventListener("os-open-sidebar", open);
+  }, []);
+  useRemindersScheduler();
+  // Three quick taps anywhere → open Grocery List as a privacy cover.
+  useTripleTapPanic();
+  // Reconcile any corrupt fronting-session state (duplicates, ghost-active
+  // rows, multiple is_primary) once per session, so users who never open
+  // the Set Fronters modal don't sit with stuck data forever.
+  useFrontSessionSweep();
+  // Credit the daily "App opened" check-in on launch, not only when the Daily
+  // Tasks page is first visited.
+  useDailyCheckInOnOpen();
+  // Keep the opt-in persistent (ongoing) status notifications — current
+  // fronters, active symptoms, the activity timer — in sync with live state.
+  // No-op on web; gated per-toggle on native.
+  usePersistentNotifications();
+
+  // Censor/spoiler + whisper reveal — tapping a `||text||` redaction bar
+  // (`.spoiler`) or a "/w @name [secret]" whisper bar (`.whisper`, rendered
+  // anywhere: bios, bulletins, comments, chat, journals, notes) toggles it
+  // open/closed. One delegated listener covers every surface regardless of
+  // how it rendered.
+  useEffect(() => {
+    const handler = (e) => {
+      // In-app link inside rendered rich content. Anchors inside
+      // dangerouslySetInnerHTML (journal @mention chips, the link picker,
+      // etc.) do a full page reload by default; intercept the ones carrying
+      // a `data-internal-link="/route"` and route through React Router
+      // instead. This is what makes journal @mentions actually navigate to
+      // the alter's profile. One delegated listener covers every surface.
+      const internal = e.target?.closest?.("a[data-internal-link]");
+      if (internal) {
+        e.preventDefault();
+        const route = safeInternalRoute(internal.getAttribute("data-internal-link"));
+        if (route) navigate(route);
+        return;
+      }
+      const wh = e.target?.closest?.(".whisper");
+      if (wh) { wh.classList.toggle("revealed"); return; }
+      const sp = e.target?.closest?.(".spoiler");
+      if (sp) sp.classList.toggle("revealed");
+    };
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
+  }, [navigate]);
+
+  // Poll friends every 60 s and show in-app banner when a friend's front changes.
+  // On first run (app open) this replaces the old one-time check.
+  useEffect(() => {
+    async function checkFriendFrontChanges() {
+      try {
+        const identity = await getLocalIdentity();
+        if (!identity) return;
+        const data = await fetchFriendsList().catch(() => null);
+        if (!data?.friends?.length) return;
+
+        let snapshots = {};
+        try {
+          snapshots = JSON.parse(localStorage.getItem("friends_front_snapshots") || "{}") || {};
+        } catch {
+          // Corrupted value — treat as empty. Don't log: this useEffect runs on
+          // every layout mount and we don't want to spam the console until the
+          // user does something that overwrites the value.
+          snapshots = {};
+        }
+        const newSnapshots = { ...snapshots };
+
+        for (const friend of data.friends) {
+          const updatedAt = friend.front?.updatedAt;
+          const fronters = friend.front?.fronters || [];
+          const privacyLevel = friend.front?.privacyLevel || 'names';
+
+          const prev = snapshots[friend.userId];
+          // Initialise snapshot without toasting on first sight
+          if (!prev) { newSnapshots[friend.userId] = { updatedAt, fronters }; continue; }
+          if (!updatedAt || updatedAt === prev.updatedAt) continue;
+
+          const label = friend.displayName || friend.systemName || 'A friend';
+          let fronterLine;
+          if (privacyLevel === 'hidden') {
+            fronterLine = 'updated their front';
+          } else if (privacyLevel === 'count_only') {
+            fronterLine = `${fronters.length} fronting`;
+          } else {
+            fronterLine = fronters.length
+              ? fronters.map(f => f.name).join(', ')
+              : 'no one fronting';
+          }
+
+          toast.info(`🔔 ${label}: ${fronterLine}`, {
+            description: 'Front updated',
+            duration: 10000,
+          });
+
+          newSnapshots[friend.userId] = { updatedAt, fronters };
+        }
+
+        localStorage.setItem("friends_front_snapshots", JSON.stringify(newSnapshots));
+      } catch (_) {}
+    }
+
+    checkFriendFrontChanges();
+    const id = setInterval(checkFriendFrontChanges, 60_000);
+    return () => clearInterval(id);
+  }, []); // intentional — runs once on mount, interval keeps it live
+
+const { data: systemSettings = [] } = useQuery({
+  queryKey: ["systemSettings"],
+  queryFn: () => base44.entities.SystemSettings.list(),
+});
+
+const { data: alters = [] } = useQuery({
+  queryKey: ["alters"],
+  queryFn: () => base44.entities.Alter.list(),
+});
+
+const { data: sessions = [] } = useQuery({
+  queryKey: ["frontHistory", "recent50"],
+  queryFn: () => base44.entities.FrontingSession.list("-start_time", 50),
+});
+
+const { data: mentionLogs = [] } = useQuery({
+  queryKey: ["mentionLogs"],
+  queryFn: () => base44.entities.MentionLog.list("-created_date", 200),
+  refetchInterval: 15000, // refetch every 15 seconds
+  refetchIntervalInBackground: false, // only when tab is active
+});
+
+const navConfig = useMemo(() => {
+  return systemSettings?.[0]?.navigation_config || DEFAULT_CONFIG;
+}, [systemSettings]);
+
+// System banner — a full-bleed image behind the top of the page on the
+// pages the user picked. Scope: "home" (Dashboard + alters directory),
+// "all", or "off" (default home). Height + image vertical position are
+// configurable in Settings → System Profile.
+const settings0 = systemSettings?.[0];
+
+// ── UI v2 (opt-in rebuild) ──
+// UI_V2_ENABLED is the build-time kill switch; ui_v2.enabled is the
+// user's own toggle. Both must be true for any v2 chrome to render, so a
+// release can ship with zero UI changes by flipping the flag alone.
+const uiV2 = useMemo(() => resolveUiV2(settings0?.ui_v2), [settings0?.ui_v2]);
+const uiV2On = UI_V2_ENABLED && uiV2.enabled;
+// v2 bars hosted in CLASSIC chrome (ui_v2 off): the quick-action bar and
+// pinned alters bar are default-on; the v2 top bar replaces the classic
+// header only when chosen. Wait for settings to load (settings0 defined)
+// so the bars never flash in before a user's saved "off" arrives.
+const classicAltersOn = readPinnedBar(settings0).enabled;
+const classicBars = !uiV2On && UI_V2_ENABLED && settings0 ? uiV2.classicBars : null;
+// Desktop width with "Show on wide screens" on: the classic layout hosts
+// the phone's bars beside its sidebar instead of hiding them. Per device —
+// ui_v2 is a look field that never syncs (src/lib/syncLook.js).
+const isWide = useIsWide();
+const wideBars = !!classicBars && isWide && classicBars.wide === true;
+const classicBarsOn = !!classicBars && (classicBars.top || classicBars.bottom || (classicBars.alters && classicAltersOn));
+// The --v2-* tokens are emitted in classic mode UNCONDITIONALLY (not just
+// when bars are hosted): the widget board is one swipe left of the classic
+// home now, and its widgets read these variables.
+const classicV2VarsOn = !uiV2On && UI_V2_ENABLED && !!settings0;
+const uiV2Vars = useMemo(
+  () => ((uiV2On || classicV2VarsOn) ? buildTokenVars(uiV2) : null),
+  [uiV2On, classicV2VarsOn, uiV2]
+);
+// On the v2 home the board's own notice stack (V2Notices) carries plan
+// reminders, fired reminders and mentions — the classic overlays are
+// suppressed there so nothing double-surfaces or fights the wallpaper's
+// stacking context. Everywhere else (no wallpaper) the classic surfaces
+// still run, even under v2.
+const v2HomeNotices = uiV2On && location.pathname === "/";
+
+// Dialogs, drawers and dropdowns are portaled to <body>, OUTSIDE the app
+// root div — tokens set only there never reach them (the "popups ignore
+// the corner slider" bug). Mirror the flag + variables onto <html>, so the
+// cascade covers portals too. Cleaned up when v2 turns off.
+useEffect(() => {
+  const root = document.documentElement;
+  if (!uiV2Vars || (!uiV2On && !classicV2VarsOn)) {
+    root.removeAttribute("data-ui-v2");
+    root.removeAttribute("data-classic-v2-bars");
+    root.removeAttribute("data-classic-v2-top");
+    root.removeAttribute("data-classic-v2-wide");
+    root.removeAttribute("data-v2-bstyle");
+    root.removeAttribute("data-v2-hstyle");
+    return undefined;
+  }
+  // Body / heading style flags (Text & layout sheet) apply in BOTH modes —
+  // the sheet edits the classic home too, and a flag that did nothing there
+  // read as broken (owner report). Only set while a flag is picked.
+  const bstyle = uiV2.tokens.bodyStyle?.length ? uiV2.tokens.bodyStyle.join(" ") : "";
+  const hstyle = uiV2.tokens.headerStyle?.length ? uiV2.tokens.headerStyle.join(" ") : "";
+  if (bstyle) root.setAttribute("data-v2-bstyle", bstyle); else root.removeAttribute("data-v2-bstyle");
+  if (hstyle) root.setAttribute("data-v2-hstyle", hstyle); else root.removeAttribute("data-v2-hstyle");
+  // Classic mode: emit ONLY the --v2-* namespace so the bars and the
+  // swipe-left board can render, and none of the app-skinning writes
+  // below — the classic app must not visibly re-skin (radius, primary
+  // colour). Full v2 keeps the complete behaviour. The bars' clearance
+  // attribute applies only while bars are actually hosted.
+  if (!uiV2On) {
+    // The attribute hides the classic tab bar and drives the content
+    // clearance — it tracks the BOTTOM replacement specifically.
+    if (classicBars?.bottom) root.setAttribute("data-classic-v2-bars", "1");
+    else root.removeAttribute("data-classic-v2-bars");
+    if (classicBars?.top) root.setAttribute("data-classic-v2-top", "1");
+    else root.removeAttribute("data-classic-v2-top");
+    // Desktop-width bars: content clearance + the sidebar offset they sit beside.
+    if (wideBars) root.setAttribute("data-classic-v2-wide", "1");
+    else root.removeAttribute("data-classic-v2-wide");
+    const applied = [];
+    for (const [k, v] of Object.entries(uiV2Vars)) {
+      if (!k.startsWith("--v2-")) continue;
+      root.style.setProperty(k, v);
+      applied.push(k);
+    }
+    return () => {
+      root.removeAttribute("data-classic-v2-bars");
+      root.removeAttribute("data-classic-v2-top");
+      root.removeAttribute("data-classic-v2-wide");
+      for (const k of applied) root.style.removeProperty(k);
+    };
+  }
+  root.setAttribute("data-ui-v2", "1");
+  root.removeAttribute("data-classic-v2-bars");
+  root.removeAttribute("data-classic-v2-top");
+  const applied = [];
+  for (const [k, v] of Object.entries(uiV2Vars)) {
+    root.style.setProperty(k, v);
+    // --color-primary is co-owned with ThemeContext; never REMOVE it on
+    // cleanup (that left the app with no primary at all when the highlight
+    // was cleared) — the theme re-write below restores its own value.
+    if (k !== "--color-primary") applied.push(k);
+  }
+  root.style.setProperty("--radius", uiV2Vars["--v2-radius"]);
+  applied.push("--radius");
+  // Highlight set → it is the primary colour app-wide. ThemeContext also
+  // re-asserts this whenever the theme changes (see there), so whichever
+  // effect runs last, the two agree.
+  // Only a REAL colour counts — when the highlight follows Primary the var
+  // is the literal "var(--color-primary)", and writing that into
+  // --color-primary would make it reference itself (→ no primary at all).
+  const hl = uiV2Vars["--v2-accent"];
+  if (hl && !/^var\(/.test(hl)) {
+    root.style.setProperty("--color-primary", hl);
+    const t = hexToHslTripletSafe(hl);
+    if (t) root.style.setProperty("--primary", t);
+    // Accent follows the highlight (merged — see ThemeContext).
+    root.style.setProperty("--color-accent", hl);
+    if (t) root.style.setProperty("--accent", t);
+  }
+  return () => {
+    root.removeAttribute("data-ui-v2");
+    for (const k of applied) root.style.removeProperty(k);
+    // Give primary back to the theme when the highlight (or v2) goes away.
+    try { window.dispatchEvent(new Event("symphony-theme-storage-change")); } catch { /* SSR */ }
+  };
+}, [uiV2On, uiV2Vars, classicV2VarsOn, classicBarsOn, classicBars?.top, classicBars?.bottom, wideBars, uiV2.tokens.bodyStyle, uiV2.tokens.headerStyle]);
+// Display options → Layout (content width, alignment, borders, corners)
+// apply to the page in BOTH layouts — the sheet opens over classic pages
+// too, and a slider that changed nothing behind it read as broken (owner
+// report). Flags on <html> drive the rules in index.css. Classic only gets
+// a flag once the value differs from the default, so an untouched classic
+// app keeps its designed look; full v2 always styles radius + borders.
+const layoutTokens = uiV2.tokens;
+useEffect(() => {
+  const root = document.documentElement;
+  if (!uiV2On && !classicV2VarsOn) {
+    root.removeAttribute("data-os-layout");
+    root.removeAttribute("data-os-align-x");
+    return;
+  }
+  const def = (id) => V2_TOKEN_DEFS.find((d) => d.id === id)?.default;
+  const changed = (id) => layoutTokens[id] != null && layoutTokens[id] !== def(id);
+  const flags = [];
+  if (Number(layoutTokens.contentW) > 0) flags.push("width");
+  if (uiV2On || changed("radius")) flags.push("radius");
+  if (uiV2On || changed("borderW")) flags.push("border");
+  if (flags.length) root.setAttribute("data-os-layout", flags.join(" "));
+  else root.removeAttribute("data-os-layout");
+  const ax = layoutTokens.alignX;
+  if (ax === "left" || ax === "right") root.setAttribute("data-os-align-x", ax);
+  else root.removeAttribute("data-os-align-x");
+}, [uiV2On, classicV2VarsOn, layoutTokens.contentW, layoutTokens.radius, layoutTokens.borderW, layoutTokens.alignX]);
+  // The desktop sidebar is sticky under the top chrome, and its offset
+  // used to be a hardcoded 4rem — the CLASSIC header's height. With the
+  // v2 top bar that chrome is 49px, and a sticky element is clamped to
+  // its `top`, so the sidebar got shoved 15px down and left a gap under
+  // the bar. Bar heights are user-configurable too, so any constant is
+  // wrong for someone. Measure the real thing instead.
+  useEffect(() => {
+    const root = document.documentElement;
+    const measure = () => {
+      let h = 0;
+      for (const el of document.querySelectorAll("body header")) {
+        const cs = getComputedStyle(el);
+        if (cs.position !== "sticky" && cs.position !== "fixed") continue;
+        h += el.offsetHeight;
+      }
+      root.style.setProperty("--os-chrome-h", `${Math.round(h)}px`);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    for (const el of document.querySelectorAll("body header")) ro.observe(el);
+    window.addEventListener("resize", measure);
+    return () => { ro.disconnect(); window.removeEventListener("resize", measure); };
+  }, [uiV2On, classicBarsOn]);
+const bannerUrl = settings0?.system_banner_url || "";
+const bannerHeight = typeof settings0?.system_banner_height === "number" ? settings0.system_banner_height : 150;
+const bannerPosition = typeof settings0?.system_banner_position === "number" ? settings0.system_banner_position : 50;
+const bannerScope = settings0?.system_banner_scope || "home";
+// Individual alter + group/subsystem profiles have their OWN background
+// image (Settings on each profile), so the system-wide banner is always
+// suppressed there — even in "all" scope — to avoid two backgrounds
+// clashing. The banner still shows on the alters directory (/Home).
+const isOwnBackgroundPage =
+  location.pathname.startsWith("/alter") || location.pathname.startsWith("/group/");
+const bannerVisible =
+  !!bannerUrl &&
+  bannerScope !== "off" &&
+  !isOwnBackgroundPage &&
+  (bannerScope === "all" || location.pathname === "/" || location.pathname === "/Home");
+
+const termMap = useMemo(() => ({
+  alters:           terms.Alters,
+  checkin:          `${terms.System} Meeting`,
+  "system-map":     `${terms.System} Map`,
+  "system-history": `${terms.System} History`,
+}), [terms]);
+
+// Bumps when mod pages join or leave ALL_PAGES (src/lib/mods/registry.js).
+const modPagesVersion = useModPagesVersion();
+// Needs (and its interrupt note) is experimental — hidden until switched on.
+const experimentalFeaturesOn = useExperimentalOn();
+const navItems = useMemo(() => {
+  return (navConfig.topBar || [])
+    .map(pageId => ALL_PAGES.find(p => p.id === pageId))
+    .filter(Boolean)
+    .map(page => ({ ...page, label: termMap[page.id] || page.label }));
+}, [navConfig.topBar, termMap, modPagesVersion]);
+
+
+const bottomNavItems = useMemo(() => {
+  return (navConfig.bottomBar || [])
+    .map(pageId => ALL_PAGES.find(p => p.id === pageId))
+    .filter(Boolean)
+    .map(page => ({ ...page, label: termMap[page.id] || page.label }));
+}, [navConfig.bottomBar, termMap, modPagesVersion]);
+
+// Name of the current page, for the polite screen-reader route announcer
+// below. SPA route changes are otherwise silent to assistive tech.
+const routeAnnouncement = useMemo(() => {
+  const p = location.pathname;
+  if (p === "/") return "Dashboard";
+  const match = ALL_PAGES.find(pg => pg.path && pg.path !== "/" && p.startsWith(pg.path));
+  return match ? (termMap[match.id] || match.label) : "";
+}, [location.pathname, termMap, modPagesVersion]);
+
+const { data: pendingReminders = [] } = usePendingReminderInstances();
+const pendingCount = pendingReminders.filter(i => i.status === "fired").length;
+
+// Count tasks the user should "see" right now — urgent + anything with a
+// due_date or scheduled_at coming up in the next 72 hours. Drives the
+// notification badge on the To-Do nav item.
+const { data: todoTasks = [] } = useQuery({
+  queryKey: ["tasks"],
+  queryFn: () => base44.entities.Task.list(),
+});
+const todoAlertCount = React.useMemo(() => {
+  const now = Date.now();
+  const horizon = now + 72 * 60 * 60 * 1000;
+  return todoTasks.filter(t => {
+    if (t.completed) return false;
+    if (t.is_urgent) return true;
+    if (t.scheduled_at) {
+      const s = new Date(t.scheduled_at).getTime();
+      if (s >= now && s <= horizon) return true;
+    }
+    if (t.due_date) {
+      // Handle both YYYY-MM-DD (anchor at end-of-day local) and full ISO
+      // (parse straight) — concatenating "T23:59:59" to an already-ISO
+      // string produced Invalid Date and silently zeroed the badge count.
+      const hasTime = typeof t.due_date === "string" && t.due_date.includes("T");
+      const d = hasTime
+        ? new Date(t.due_date).getTime()
+        : new Date(`${t.due_date}T23:59:59`).getTime();
+      if (!Number.isNaN(d) && d >= now && d <= horizon) return true;
+    }
+    return false;
+  }).length;
+}, [todoTasks]);
+
+const activeSession = sessions.find((s) => s.is_active);
+const frontingAlterIds = activeSession
+  ? activeSession.alter_id
+    ? sessions.filter(s => s.is_active && s.alter_id).map(s => s.alter_id)
+    : [activeSession.primary_alter_id, ...(activeSession.co_fronter_ids || [])].filter(Boolean)
+  : [];
+
+// Fronter-linked theme: when primary fronter changes, apply their linked preset
+const { alterThemeLinks, setSelectedTheme, setThemeMode, stashAndClearCustomColors, allPresets, userCustomPresets } = useTheme();
+
+// Resolve the true primary fronter by is_primary flag (not list order)
+const primaryFronter = activeSession?.alter_id
+  ? (sessions.find(s => s.is_active && s.alter_id && s.is_primary)?.alter_id ?? frontingAlterIds[0] ?? null)
+  : (activeSession?.primary_alter_id ?? null);
+const lastAppliedFronterRef = useRef(null);
+useEffect(() => {
+  if (primaryFronter === lastAppliedFronterRef.current) return;
+  lastAppliedFronterRef.current = primaryFronter;
+  if (!primaryFronter) return;
+  const linkedPreset = alterThemeLinks[primaryFronter];
+  if (!linkedPreset) return;
+  const preset = allPresets[linkedPreset] || userCustomPresets[linkedPreset];
+  if (!preset) return;
+  // An AUTOMATIC switch must not destroy hand-made, unsaved colour edits —
+  // they're stashed as a recoverable preset instead of cleared outright.
+  stashAndClearCustomColors();
+  setSelectedTheme(linkedPreset);
+  if (preset.font) setAccessibilityFontFamily(preset.font);
+  if (preset.headingFont) setAccessibilityHeadingFont(preset.headingFont);
+  if (preset.themeMode) setThemeMode(preset.themeMode);
+  // Skip accessibility-impacting settings (font size) while Preview
+  // Mode is active. Every preview system's preset includes
+  // `fontSize: "default"`, so without this guard, entering preview
+  // silently overwrites a user's chosen text size, and they'd have
+  // to re-set it after exiting. Accessibility settings belong to
+  // the user, not to demo data.
+  if (preset.fontSize && !isPreviewActive()) setAccessibilityFontSize(preset.fontSize);
+  // Apply every SystemSettings-driven Appearance setting saved with
+  // the preset. Batch into one write so fronter-linked themes
+  // restore the full Appearance look in a single round-trip.
+  const settingsPatch = {};
+  if (preset.terms) {
+    settingsPatch.term_system = preset.terms.system || 'system';
+    settingsPatch.term_alter  = preset.terms.alter  || 'alter';
+    settingsPatch.term_switch = preset.terms.switch || 'switch';
+    settingsPatch.term_front  = preset.terms.front  || 'front';
+  }
+  if (preset.waveColorKey) settingsPatch.wave_color_key = preset.waveColorKey;
+  if (preset.cornerMode) settingsPatch.corner_mode = preset.cornerMode;
+  if (preset.alterLabelMode) settingsPatch.alter_label_mode = preset.alterLabelMode;
+  if (Array.isArray(preset.dashboardLayout)) settingsPatch.dashboard_layout = preset.dashboardLayout;
+  if (preset.navigationConfig) settingsPatch.navigation_config = preset.navigationConfig;
+  if (Array.isArray(preset.upcomingPlansSurfaces)) settingsPatch.upcoming_plans_surfaces = preset.upcomingPlansSurfaces;
+  // Home layout, when the preset captured one. This is what makes an
+  // alter's linked preset restore THEIR home screen on fronting — picking
+  // the preset by hand already did it; the fronting path never did.
+  if (preset.experimentalHome && typeof preset.experimentalHome === "object") settingsPatch.experimental_home = preset.experimentalHome;
+  {
+    const cur = systemSettings?.[0];
+    const nextHome = applyHomePresetToBoard(preset, cur?.ui_v2_home);
+    if (nextHome) settingsPatch.ui_v2_home = nextHome;
+  }
+  if (Object.keys(settingsPatch).length > 0) {
+    const settings = systemSettings?.[0];
+    const op = settings?.id
+      ? base44.entities.SystemSettings.update(settings.id, settingsPatch)
+      : base44.entities.SystemSettings.create(settingsPatch);
+    op.catch(() => {});
+  }
+}, [primaryFronter]);
+
+const handleNotifClick = (mentionLog) => {
+  let path = mentionLog.navigate_path || "/";
+  // Back-compat: chat mention logs created before the message-deep-link
+  // change only stored `/chat?channel=X`. Their source_id IS the message
+  // id, so splice it in so the deep-link scrolls + highlights that
+  // specific row instead of dumping the user at the channel root.
+  if (
+    mentionLog.source_type === "chat"
+    && mentionLog.source_id
+    && path.startsWith("/chat")
+    && !path.includes("message=")
+  ) {
+    path += (path.includes("?") ? "&" : "?") + `message=${mentionLog.source_id}`;
+  }
+  if (path.includes("?id=")) {
+    navigate(path);
+  } else {
+    navigate(path, { state: { highlightBulletinId: mentionLog.source_id } });
+  }
+};
+
+  useEffect(() => {
+    // Track React Router's own history index on each navigation. PUSH
+    // bumps it, POP decrements, REPLACE leaves it where it is.
+    setHistoryIdx(window.history.state?.idx ?? 0);
+  }, [location.pathname]);
+
+  // Per-route scroll memory. <main> is the only scroll context and the SAME
+  // DOM element across route changes, so it otherwise keeps the previous page's
+  // scroll. Forward navigations should open at the top, but RETURNING to a page
+  // (e.g. the alters list after viewing/editing an alter, or any "back") should
+  // land you back where you were — losing your place is hostile, doubly so in an
+  // amnesia-aid app. So we remember each route's scroll by pathname and restore
+  // it; an unseen route defaults to the top. Skipped when a ?highlight=… deep
+  // link is present — useHighlightScroll positions the page itself.
+  const mainScrollRef = useRef(null);
+  const scrollMemory = useRef(new Map()).current;
+  useLayoutEffect(() => {
+    const el = mainScrollRef.current;
+    if (!el) return;
+    if (new URLSearchParams(location.search).has("highlight")) return;
+    const key = location.pathname;
+    const target = scrollMemory.get(key) ?? 0;
+
+    // Content can keep growing after mount as cached/async data hydrates, so a
+    // single scrollTop assignment may clamp short. Re-apply across a few frames
+    // until the container can actually reach the target. `restoring` suppresses
+    // the listener so these programmatic scrolls don't overwrite the saved value.
+    let restoring = true;
+    let raf = null;
+    let tries = 0;
+    const apply = () => {
+      const node = mainScrollRef.current;
+      if (!node) return;
+      node.scrollTop = target;
+      tries += 1;
+      if (target > 0 && node.scrollTop < target - 2 && tries < 30) {
+        raf = requestAnimationFrame(apply);
+      } else {
+        restoring = false;
+      }
+    };
+    apply();
+    const guard = setTimeout(() => { restoring = false; }, 700);
+
+    const onScroll = () => { if (!restoring) scrollMemory.set(key, el.scrollTop); };
+    el.addEventListener("scroll", onScroll, { passive: true });
+
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+      clearTimeout(guard);
+    };
+  }, [location.pathname, location.search]);
+
+  const canGoBack = historyIdx > 0 && !isTabRoot(location.pathname);
+
+  // Bulletproof back: try navigate(-1) if we genuinely have history to
+  // pop, otherwise fall back to the Dashboard. Prevents the "tap does
+  // nothing" case where the user opened the page via deep link / fresh
+  // reload (no history) but the button was still being rendered.
+  const handleBack = () => {
+    if ((window.history.state?.idx ?? 0) > 0) {
+      navigate(-1);
+    } else {
+      navigate("/");
+    }
+  };
+  // Left-edge swipe opens the menu (no on-screen indicator).
+  useSwipeBack();
+
+  return (
+    // Root is pinned to EXACTLY viewport height (h-screen) and clips
+    // overflow. This forces the document body to be unscrollable —
+    // only the inner <main> with its own overflow-auto can scroll.
+    // The mobile sticky header therefore literally cannot scroll out
+    // of view because the only scroll context is below it (inside
+    // main). Previous min-h-screen lets root grow taller than the
+    // viewport when content overflows, which makes the body scroll
+    // and drags the "sticky" header up with it in some Capacitor
+    // WebView versions.
+    <div
+      className="flex flex-col h-screen bg-background overflow-hidden"
+      data-ui-v2={uiV2On ? "1" : undefined}
+      data-rail-side={uiV2On && uiV2.tokens.railSide === "right" ? "right" : undefined}
+      data-v2-bstyle={uiV2On && uiV2.tokens.bodyStyle?.length ? uiV2.tokens.bodyStyle.join(" ") : undefined}
+      data-v2-hstyle={uiV2On && uiV2.tokens.headerStyle?.length ? uiV2.tokens.headerStyle.join(" ") : undefined}
+      style={uiV2On ? {
+        ...uiV2Vars,
+        // Clearance for fixed elements (grounding bubble, sheets) AND for
+        // page content. V2BottomChrome measures itself into
+        // --v2-bottom-chrome-h, so this follows the bar as the quick-actions
+        // drawer opens and closes; the calc below is only the fallback for
+        // the frame before its first measurement (and when it isn't
+        // mounted at all).
+        "--bottom-nav-height": `var(--v2-bottom-chrome-h, calc(${uiV2.bars.tabs ? "var(--v2-strip-h)" : "0px"} + ${uiV2.bars.actions && (uiV2.tokens.actionsMode || "bar") === "bar" ? "18px" : "0px"} + var(--v2-space)))`,
+        // Desktop rail clearance — 0 when the rail is off, and the media
+        // query in index.css keeps it from applying on phones.
+        "--v2-rail-pad": uiV2.bars.rail ? "var(--v2-rail-w)" : "0px",
+      } : undefined}
+    >
+      {/* Skip link — the first focusable element; lets keyboard / switch users
+          jump straight to the page content, past the header + nav (WCAG 2.4.1).
+          Visually hidden until focused. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[300] focus:px-4 focus:py-2 focus:rounded-lg focus:bg-primary focus:text-primary-foreground focus:text-sm focus:font-semibold focus:shadow-lg"
+      >
+        Skip to main content
+      </a>
+      {/* Pull down at the top of any page (or the home board) to refetch
+          everything — mounted once here so no page needs its own wiring. */}
+      <GlobalPullToRefresh />
+      {/* Polite route announcer — names the current page for screen readers on
+          each navigation (SPA route changes are otherwise silent). */}
+      <div aria-live="polite" role="status" className="sr-only">{routeAnnouncement}</div>
+
+      {UI_V2_ENABLED && <DisplayOptionsHost />}
+      {uiV2On && <V2StatusLine settingsRow={settings0} uiV2={uiV2} />}
+      {/* v2 top bar hosted in CLASSIC chrome — replaces the classic
+          headers (hidden via [data-classic-v2-top] in index.css). */}
+      {!uiV2On && classicBars?.top && <V2StatusLine settingsRow={settings0} uiV2={uiV2} classicHost />}
+
+      {/* ── Desktop top header (hidden on mobile) ──
+          The inner row spans the full viewport width so the logo + name
+          sit flush to the left edge and the nav buttons sit flush to the
+          right edge, instead of being centred inside a max-w-6xl block.
+          paddingTop/Left/Right pull in the OS safe-area insets so the
+          header sits below the status bar (and clear of the rounded
+          corners/notch in landscape) on the native Android build. On
+          web/TWA these envs evaluate to 0 and the header looks the
+          same as before. */}
+      <header
+        className="os-classic-chrome os-classic-header sticky top-0 z-50 bg-background/85 backdrop-blur-xl hidden lg:block border-b border-border/50"
+        style={{
+          // Clamped: garbage inset values (shade/split-screen/WebView quirks)
+          // must never inflate the header into a giant empty band.
+          paddingTop: 'min(env(safe-area-inset-top, 0px), 64px)',
+          paddingLeft: 'env(safe-area-inset-left, 0px)',
+          paddingRight: 'env(safe-area-inset-right, 0px)',
+        }}
+      >
+        <HeaderWaveBlock />
+        <div className="w-full px-4 sm:px-6 h-16 flex items-center justify-between relative" style={{ zIndex: 1 }}>
+          <Link
+            to="/"
+            onClick={goHomeClean}
+            className="flex items-center gap-2.5 select-none"
+            aria-label="Oceans Symphony home"
+          >
+            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+              <img src="/logo.png" className="w-7 h-7 object-contain rounded-md" alt="logo" />
+            </div>
+            <span className="font-display text-lg font-semibold tracking-tight text-foreground">Oceans Symphony</span>
+          </Link>
+
+          <nav className="flex items-center gap-1" aria-label="Main navigation">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = item.path === "/" ?
+              location.pathname === "/" :
+              item.path === "/Home" ?
+              location.pathname === "/Home" || location.pathname.startsWith("/alter") :
+              location.pathname.startsWith(item.path);
+              return (
+                <Link key={item.path} to={item.path}
+                aria-label={item.label}
+                aria-current={isActive ? "page" : undefined} className="text-muted-foreground px-2 text-sm font-medium rounded-lg flex items-center gap-2 transition-all duration-200 select-none min-h-[44px] hover:text-foreground hover:bg-muted/50">
+
+
+
+                  
+                  <Icon className="w-4 h-4" />
+                  <span>{item.label}</span>
+                </Link>);
+
+            })}
+
+            <Link to="/reminders" aria-label="Reminders"
+              aria-current={location.pathname.startsWith("/reminders") ? "page" : undefined}
+              className="relative text-muted-foreground px-3 text-sm font-medium rounded-lg flex items-center gap-2 transition-all duration-200 select-none min-h-[44px] hover:text-foreground hover:bg-muted/50">
+              <Bell className="w-4 h-4" />
+              <span>Reminders</span>
+              {pendingCount > 0 && (
+                <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-red-500 text-white rounded-full text-[0.5625rem] font-bold flex items-center justify-center">
+                  {pendingCount > 9 ? "9+" : pendingCount}
+                </span>
+              )}
+            </Link>
+            {/* The SAME page-aware menu the phone header uses. Desktop had
+                a plain link straight into all of Settings, so the per-page
+                actions (Customize dashboard, {Alter} setup, Display
+                options) were unreachable above the lg breakpoint — the
+                phone header that hosts them is lg:hidden. */}
+            <HeaderPageMenu label="Settings" className="rounded-lg transition-all duration-200 select-none" />
+          </nav>
+        </div>
+      </header>
+
+      {/* ── Mobile top bar (shown only on mobile) ──
+          Layout: animated wave-tinted block fills the top half behind
+          everything; the title is centered horizontally; the back/menu
+          button sits on the left and the bell+settings on the right.
+          The wave's bottom edge crosses through the centre of the
+          title and the icons, like a horizon line. */}
+      <header
+        className="os-classic-chrome os-classic-header sticky top-0 z-50 bg-background/90 backdrop-blur-xl lg:hidden flex flex-col border-b border-border/50"
+        style={{
+          // Clamped: garbage inset values (shade/split-screen/WebView quirks)
+          // must never inflate the header into a giant empty band.
+          paddingTop: 'min(env(safe-area-inset-top, 0px), 64px)',
+          paddingLeft: 'env(safe-area-inset-left, 0px)',
+          paddingRight: 'env(safe-area-inset-right, 0px)',
+        }}
+      >
+        <HeaderWaveBlock />
+        {/* Header row sizing: 48px portrait, 44px landscape. Drops the
+            previous 56px portrait height that left visible empty space
+            below the icons / title. 48px still wraps min-h-[44px] tap
+            targets cleanly and matches the Apple/Google 44px minimum.
+            Landscape stays tighter so chrome doesn't eat a sixth of the
+            viewport on the typical ~360 CSS px short edge. */}
+        <div className="a11y-header-row flex items-center justify-between px-2 h-12 landscape:h-11 relative" style={{ zIndex: 1 }}>
+          {/* Left: back button or menu icon */}
+          {canGoBack ?
+            <button
+              onClick={handleBack}
+              aria-label="Go back"
+              title="Back"
+              className="flex items-center justify-center min-w-[44px] min-h-[44px] px-2 rounded-xl text-primary transition-colors hover:bg-muted/50">
+              <ChevronLeft className="w-5 h-5" />
+            </button> :
+            <button
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open navigation menu"
+              className="flex items-center justify-center min-w-[44px] min-h-[44px] rounded-xl transition-colors hover:bg-muted/50 flex-shrink-0">
+              <img src="/logo.png" className="w-7 h-7 object-contain rounded-md" alt="logo" />
+            </button>
+          }
+
+          {/* Centered title — absolutely positioned so it stays in the
+              true middle regardless of how wide the side controls are. */}
+          <button
+            onClick={() => navigate("/")}
+            aria-label="Home"
+            className="a11y-keep-truncate absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 select-none px-2 max-w-[60%] truncate"
+          >
+            <span className="a11y-header-title font-display text-lg font-normal tracking-tight text-foreground">
+              Oceans Symphony
+            </span>
+          </button>
+
+          {/* Right: bell + settings */}
+          <div className="flex items-center gap-1">
+            <Link to="/reminders" aria-label="Reminders"
+              className={cn(
+                "relative flex items-center justify-center min-w-[44px] min-h-[44px] rounded-xl transition-colors",
+                location.pathname.startsWith("/reminders") ? "text-primary bg-primary/10" : "text-muted-foreground hover:bg-muted/50"
+              )}>
+              <Bell className="w-5 h-5" />
+              {pendingCount > 0 && (
+                <span className="absolute top-2 right-2 w-3.5 h-3.5 bg-red-500 text-white rounded-full text-[0.5625rem] font-bold flex items-center justify-center">
+                  {pendingCount > 9 ? "9+" : pendingCount}
+                </span>
+              )}
+            </Link>
+            <HeaderPageMenu />
+          </div>
+        </div>
+      </header>
+
+      {/* Full-bleed banners — siblings of the header so their
+          background/border stretch to the screen edges. Cards that need
+          breathing room (like Base44MigrationBanner) stay inside
+          <main> where the px-4 gutter wraps them. */}
+      {/* App chrome that sits ABOVE the page. The v2 home board paints a
+          full-viewport wallpaper from inside its own stacking context, and
+          because the board comes later in the DOM that context covered these
+          banners — leaving them invisible but still taking their space and,
+          since the wallpaper is pointer-events-none, still tappable. An
+          invisible live control is the worst of both. Own stacking layer. */}
+      <div className="relative z-10">
+        <PreviewModeBanner />
+        {!v2HomeNotices && <AnnouncementBanner />}
+        <LandscapeHintBanner />
+        <A11yModeBanner />
+      </div>
+
+      {/* ── Desktop: sidebar + content / Mobile: content only ── */}
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* Desktop persistent sidebar */}
+        {/* z-30 + frosted backdrop so the sidebar stays visible chrome (like the
+            header) even when a page paints a full-viewport `fixed inset-0`
+            background — e.g. an alter/group profile with a custom theme, whose
+            background otherwise painted over the sidebar and made it vanish. */}
+        <aside
+          className="os-classic-chrome hidden lg:flex flex-col w-52 shrink-0 border-r border-border/40 overflow-y-auto overscroll-contain sticky self-start z-30 bg-background/85 backdrop-blur-xl"
+          style={{
+            top: "var(--os-chrome-h, 4rem)",
+            height: "calc(100vh - var(--os-chrome-h, 4rem))",
+          }}
+        >
+          {/* List ⇄ grid, same hop the mobile drawer has had. This sidebar
+              is a SEPARATE render from SidebarNav (that one is the phone
+              drawer), so the toggle was simply missing on desktop and the
+              app grid had no entry point at all. */}
+          <div className="mx-2 mt-1 mb-0.5 flex items-center gap-1">
+            <button
+              type="button"
+              onClick={openAppGrid}
+              aria-label="Switch to the app grid"
+              title="App grid"
+              className="flex-1 px-2 py-1.5 flex items-center gap-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            >
+              <LayoutGrid className="w-4 h-4" />
+              <span className="text-sm font-medium">App grid</span>
+            </button>
+            {/* Grocery list / privacy cover, matching the phone drawer.
+                Still openable by triple-tap anywhere. */}
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent("open-grocery-list"))}
+              aria-label="Grocery list (also acts as a privacy cover; triple-tap anywhere to open)"
+              title="Grocery list · triple-tap anywhere to open"
+              className="w-8 h-8 flex items-center justify-center rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            >
+              <ShoppingCart className="w-4 h-4" />
+            </button>
+          </div>
+          <nav className="px-2 pb-4 space-y-4" aria-label="Sidebar navigation">
+            {/* One list for both sidebars: buildSidebarGroups is the phone
+                drawer's source too, so a page added there is reachable here
+                (a second hard-coded copy here was missing 8 pages). */}
+            {applySidebarConfig(buildSidebarGroups(terms.Alters, terms.System), navConfig?.sidebar).map(({ label, items }) => (
+              <div key={label}>
+                <p className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground px-2 mb-1">
+                  {label}
+                </p>
+                <div className="space-y-0.5">
+                  {items.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = item.path === "/"
+                      ? location.pathname === "/"
+                      : item.path === "/Home"
+                      ? location.pathname === "/Home" || location.pathname.startsWith("/alter")
+                      : location.pathname.startsWith(item.path);
+                    return (
+                      <Link
+                        key={item.id}
+                        to={item.path}
+                        aria-current={isActive ? "page" : undefined}
+                        className={cn(
+                          "flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors",
+                          isActive
+                            ? "bg-primary/10 text-primary"
+                            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                        )}
+                      >
+                        <Icon className="w-4 h-4 shrink-0" />
+                        <span className="flex-1 truncate">{item.label}</span>
+                        {item.id === "reminders" && pendingCount > 0 && (
+                          <span className="w-4 h-4 bg-red-500 text-white rounded-full text-[0.5625rem] font-bold flex items-center justify-center shrink-0">
+                            {pendingCount > 9 ? "9+" : pendingCount}
+                          </span>
+                        )}
+                        {item.id === "todo" && todoAlertCount > 0 && (
+                          <span className="w-4 h-4 bg-amber-500 text-white rounded-full text-[0.5625rem] font-bold flex items-center justify-center shrink-0" title="Urgent or due-soon to-dos">
+                            {todoAlertCount > 9 ? "9+" : todoAlertCount}
+                          </span>
+                        )}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </nav>
+        </aside>
+
+        {/* Main content. Padding lives on <main> (as it originally did) and
+            the Outlet is a DIRECT child, so full-height pages (e.g. System
+            Chat) that use `h-full` still get a bounded height — wrapping the
+            Outlet in an extra block div broke that cascade and let the chat
+            message list shove the composer off-screen. The SystemBanner sits
+            BEHIND content via a negative z-index inside main's `isolate`
+            stacking context (and negative insets to reach edge-to-edge past
+            the padding), so no content wrapper is needed. */}
+        <main ref={mainScrollRef} id="main-content" tabIndex={-1} role="main" className="app-content-main focus:outline-none relative isolate flex-1 min-w-0 px-4 lg:px-6 py-0 lg:py-8 lg:pb-8 overflow-y-auto overflow-x-hidden">
+          {bannerVisible && (
+            <SystemBanner url={bannerUrl} height={bannerHeight} position={bannerPosition} />
+          )}
+          {!showFeatureTour && !pageScopedTourRoute && (
+            // Own stacking layer: the v2 board's page background is a
+            // fixed -z-10 layer INSIDE the board's context, which paints
+            // over earlier in-flow siblings like this banner (the same
+            // invisible-banner class of bug as the chrome banners).
+            <div className="relative z-10">
+              <PageTutorialBanner
+                onLaunch={(route) => setPageScopedTourRoute(route)}
+              />
+            </div>
+          )}
+          {/* Lazy page chunks (App.jsx route splitting) suspend HERE, so the
+              header / bars stay mounted and only the content slot shows the
+              spinner — an outer boundary would blank the whole chrome. */}
+          <Suspense fallback={
+            <div className="flex items-center justify-center py-24" role="status" aria-live="polite">
+              <div className="w-8 h-8 border-4 border-muted border-t-primary rounded-full animate-spin" aria-label="Loading page" />
+            </div>
+          }>
+            <QuietBoundary name="ModNavSync"><ModNavSync /></QuietBoundary>
+            <Outlet context={{ setShowFeatureTour }} />
+          </Suspense>
+        </main>
+
+      </div>
+
+      {showBlobMigration && (
+        <React.Suspense fallback={null}>
+          <LazyBlobStorageMigrationModal onClose={() => setShowBlobMigration(false)} />
+        </React.Suspense>
+      )}
+
+      {uiV2On && <V2BottomChrome uiV2={uiV2} settingsRow={settings0} />}
+      {uiV2On && <V2SideRail uiV2={uiV2} settingsRow={settings0} />}
+      {uiV2On && <V2QuickDock uiV2={uiV2} settingsRow={settings0} />}
+      {uiV2On && <ActiveNowBubble uiV2={uiV2} settingsRow={settings0} />}
+
+      {/* v2 quick-action bar + pinned alters bar hosted in CLASSIC chrome.
+          The classic tab bar stays; the hosted chrome parks above it
+          (classicHost) with tabs/rail forced off. The dock covers the
+          float/bubble quick-action modes; it self-gates on actionsMode. */}
+      {/* The v2 bottom chrome REPLACES the classic tab bar in classic mode
+          (owner call): page tabs (same navigation_config), the fold-out
+          quick-action strip with its swipe handle, and the alters bar —
+          the real component, so every gesture works identically. Mobile
+          widths only (classic desktop keeps its sidebar; display:none on
+          this wrapper hides the fixed children too). The classic tab bar
+          is hidden via [data-classic-v2-bars] in index.css. */}
+      {classicBars?.bottom && !wideBars && (
+        <div className="lg:hidden">
+          <V2BottomChrome
+            uiV2={{
+              ...uiV2,
+              bars: { ...uiV2.bars, tabs: true, rail: false, actions: uiV2.bars.actions && classicBars.actions },
+            }}
+            settingsRow={settings0}
+          />
+        </div>
+      )}
+      {classicBars?.bottom && classicBars.actions && !wideBars && (
+        <div className="lg:hidden">
+          <V2QuickDock uiV2={{ ...uiV2, bars: { ...uiV2.bars, rail: false } }} settingsRow={settings0} />
+        </div>
+      )}
+
+      {/* Desktop width, "Show on wide screens" on: the SAME chrome, beside
+          the sidebar. Each bar follows its own switch here (the tab bar is
+          optional — the sidebar already navigates), and each keeps its own
+          display mode: quick actions as a bar, floating edge bar or bubble;
+          the {alters} bar docked top/bottom, as a vertical rail left/right,
+          or a bubble. Mounted INSTEAD of the phone-width instance, never
+          alongside it — two instances would both answer the alters-bar
+          toggle event (cancelling out) and both publish the bar height. */}
+      {wideBars && (classicBars.bottom || classicBars.actions || classicBars.alters) && (
+        <V2BottomChrome
+          uiV2={{
+            ...uiV2,
+            bars: { ...uiV2.bars, tabs: classicBars.bottom, rail: false, actions: uiV2.bars.actions && classicBars.actions },
+          }}
+          settingsRow={settings0}
+          insetLeft="var(--os-classic-sidebar-w, 0px)"
+        />
+      )}
+      {wideBars && classicBars.actions && (
+        <V2QuickDock uiV2={{ ...uiV2, bars: { ...uiV2.bars, rail: false } }} settingsRow={settings0} />
+      )}
+
+      {/* ── Fixed bottom tab bar (mobile only) ── */}
+      <nav
+        className="os-classic-chrome os-classic-bottom-nav a11y-bottom-nav lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-background/95 backdrop-blur-xl border-t border-border/50"
+        style={{
+          height: "calc(var(--bottom-nav-height, 56px) + var(--os-sab))",
+          paddingBottom: "var(--os-sab)",
+          paddingLeft: "env(safe-area-inset-left, 0px)",
+          paddingRight: "env(safe-area-inset-right, 0px)",
+        }}
+        aria-label="Tab bar navigation">
+
+        <div className="flex items-center justify-around" style={{ height: "var(--bottom-nav-height, 56px)" }}>
+          {bottomNavItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = item.path === "/" ?
+            location.pathname === "/" :
+            item.path === "/Home" ?
+            location.pathname === "/Home" || location.pathname.startsWith("/alter") :
+            location.pathname.startsWith(item.path);
+            return (
+              <Link
+                key={item.path}
+                to={item.path}
+                aria-label={item.label}
+                aria-current={isActive ? "page" : undefined}
+                className={cn(
+                  "flex flex-col items-center justify-center gap-0.5 flex-1 basis-0 min-w-0 min-h-[44px] py-1 px-0.5 select-none transition-colors",
+                  isActive ? "text-primary" : "text-muted-foreground"
+                )}>
+
+                <Icon className={cn("w-5 h-5 flex-shrink-0 transition-transform", isActive && "scale-110")} />
+                <span className="os-tab-label text-[0.6875rem] font-medium leading-tight">{item.label}</span>
+              </Link>);
+
+            })}
+          </div>
+      </nav>
+      
+      {/* The Song widget's "play on every page" track. */}
+      <GlobalSongHost />
+      <SidebarNav open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      {/* System switcher sheet — ONE host for every chrome trigger (top-bar
+          name, sidebar app icon). */}
+      <SystemSwitcherSheetHost />
+      {/* "Try it" safety net — offers Keep / Put it back after a pack
+          is trialled, from anywhere in the app. */}
+      <PackRestoreBar />
+      {/* The floating support bubble is the always-there crisis path in the
+          classic UI. In v2 the quick actions carry a Support anchor in every
+          placement (handle row, floating bar, bubble, rail), so showing both
+          is redundant — but if the user hides quick actions entirely, the
+          bubble comes back rather than leaving no support entry at all. */}
+      {!(uiV2On && uiV2.bars.actions) && <FloatingGroundingButton />}
+      {experimentalFeaturesOn && <QuietBoundary name="InterruptCheckNote"><InterruptCheckNote /></QuietBoundary>}
+      <GroceryListPanel />
+      <QuietBoundary name="ActivityPromptsHost"><ActivityPromptsHost /></QuietBoundary>
+      {/* Devices that disagree about who's fronting — the person picks. */}
+      <QuietBoundary name="FrontConflictCard"><FrontConflictCard variant="floating" /></QuietBoundary>
+      {/* Saved Quick Actions (Shortcuts) — opens in place on any page. */}
+      <QuickActionsHost />
+      {!v2HomeNotices && <ReminderToast />}
+      {showFeatureTour && <FeatureTour onClose={() => setShowFeatureTour(false)} />}
+      {pageScopedTourRoute && !showFeatureTour && (
+        <FeatureTour
+          restrictToRoute={pageScopedTourRoute}
+          onClose={() => setPageScopedTourRoute(null)}
+        />
+      )}
+      {!v2HomeNotices && (
+        <NotificationPopups
+          mentionLogs={mentionLogs}
+          alters={alters}
+          frontingAlterIds={frontingAlterIds}
+          onNotifClick={handleNotifClick}
+        />
+      )}
+    </div>);
+
+}

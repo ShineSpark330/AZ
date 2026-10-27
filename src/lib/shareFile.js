@@ -1,0 +1,212 @@
+// Single entry point for "save this file to the user's device" across
+// every build target. Was tribal knowledge spread across autoBackup.js
+// and ExportModal.jsx — each had its own copy of "try navigator.share,
+// fall back to anchor download." That fallback chain breaks inside a
+// Capacitor WebView: navigator.canShare({files}) reports false on most
+// versions, and the anchor-click download is a no-op because the
+// WebView has no download manager wired up. Result: "Back up now" and
+// "Save PDF" silently did nothing on native.
+//
+// Native path:
+//   1. Write the blob to the app's sandbox cache via @capacitor/filesystem.
+//      No permission prompt — Cache is always writable.
+//   2. Hand the resulting content:// URI to @capacitor/share so the OS
+//      pops the share sheet (Files / Drive / Email / etc.).
+//   3. User picks where to save it; OS confirms visually.
+//
+// Web path: existing Web Share API → anchor download chain. The fact
+// that this worked on web/TWA all along is why the bug went unnoticed
+// until the native build shipped.
+
+import { isNative } from "@/lib/platform";
+import { blobToBase64, BASE64_SLICE_BYTES } from "@/lib/base64";
+
+// Returns { result, uri?, error? }
+//   result: "shared" | "downloaded" | "cancelled" | "failed"
+//
+// `error` codes worth surfacing to the UI:
+//   - "chunk_load_failed": A dynamically-imported Capacitor plugin
+//     chunk wasn't reachable. Usually means the cached HTML refers
+//     to a chunk hash from an older build that the WebView can't
+//     find — the caller should suggest a hard reload.
+async function shareNative(blob, filename, title, dialogTitle) {
+  // Dynamic-import the Capacitor plugins so the web bundle doesn't
+  // ship them. On a stale WebView the chunk file can 404 — surface
+  // that distinctly so the caller can render a "reload to recover"
+  // prompt instead of bubbling a raw "Failed to fetch dynamically
+  // imported module" string.
+  let Filesystem, Directory;
+  try {
+    ({ Filesystem, Directory } = await import("@capacitor/filesystem"));
+  } catch (e) {
+    console.warn("[shareFile] failed to load @capacitor/filesystem chunk:", e?.message || e);
+    return { result: "failed", error: "chunk_load_failed" };
+  }
+
+  let uri;
+  try {
+    // Chunked — see writeBlobChunked; one giant base64 bridge message
+    // OOM-killed the app on large backups.
+    uri = await writeBlobChunked(Filesystem, { blob, path: filename, directory: Directory.Cache });
+    console.log("[shareFile] wrote to cache:", uri);
+  } catch (e) {
+    console.warn("[shareFile] cache write failed:", e?.message || e);
+    return { result: "failed", error: e?.message || "cache_write_failed" };
+  }
+  if (!uri) return { result: "failed", error: "no_uri" };
+
+  let Share;
+  try {
+    ({ Share } = await import("@capacitor/share"));
+  } catch (e) {
+    console.warn("[shareFile] failed to load @capacitor/share chunk:", e?.message || e);
+    return { result: "failed", uri, error: "chunk_load_failed" };
+  }
+  try {
+    await Share.share({
+      title,
+      url: uri,
+      dialogTitle: dialogTitle || "Save file",
+    });
+    return { result: "shared", uri };
+  } catch (e) {
+    const msg = (e?.message || "").toLowerCase();
+    if (msg.includes("cancel")) return { result: "cancelled", uri };
+    console.warn("[shareFile] Share.share failed:", e?.message || e);
+    return { result: "failed", uri, error: e?.message || "share_failed" };
+  }
+}
+
+// Write a Blob to a native file in CHUNKS. Filesystem.writeFile with one
+// giant base64 string marshals the whole file across the JS↔native bridge
+// in a single JSObject — for a big backup (hundreds of images) that
+// allocation OOM-killed the app (the com.getcapacitor.JSObject.<init>
+// OutOfMemoryError in Play vitals, and the "export/import just goes
+// black" reports). 3MB slices (multiple of 3 so each slice's base64
+// concatenates losslessly) keep every bridge message small.
+const CHUNK_BYTES = BASE64_SLICE_BYTES;
+export async function writeBlobChunked(Filesystem, { blob, path, directory }) {
+  let uri = null;
+  for (let off = 0; off < blob.size; off += CHUNK_BYTES) {
+    const slice = blob.slice(off, Math.min(off + CHUNK_BYTES, blob.size));
+    const b64 = await blobToBase64(slice);
+    if (off === 0) {
+      const r = await Filesystem.writeFile({ path, data: b64, directory, recursive: true });
+      uri = r?.uri || null;
+    } else {
+      await Filesystem.appendFile({ path, data: b64, directory });
+    }
+  }
+  if (blob.size === 0) {
+    const r = await Filesystem.writeFile({ path, data: "", directory, recursive: true });
+    uri = r?.uri || null;
+  }
+  return uri;
+}
+
+async function shareWeb(blob, filename, title, prefer = "share") {
+  // `prefer`:
+  //   "share"    — Web Share API first (good for "send this to another
+  //                app" semantics like sharing a therapy report to a
+  //                messaging app).
+  //   "download" — anchor-click download first (good for "save this
+  //                file to my device" semantics like exporting a
+  //                backup — the WebView's download manager drops the
+  //                file straight into ~/Downloads on every major
+  //                desktop and mobile browser, no share-sheet
+  //                ceremony).
+  const tryDownload = () => {
+    try {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      return { result: "downloaded" };
+    } catch (e) {
+      return { result: "failed", error: e?.message || "download_failed" };
+    }
+  };
+  const tryShare = async () => {
+    if (typeof navigator === "undefined" || !navigator.share || !navigator.canShare) return null;
+    try {
+      const file = new File([blob], filename, { type: blob.type || "application/octet-stream" });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title });
+        return { result: "shared" };
+      }
+    } catch (e) {
+      if (e?.name === "AbortError") return { result: "cancelled" };
+      console.warn("[shareFile] navigator.share failed, falling back:", e?.message);
+    }
+    return null;
+  };
+
+  if (prefer === "download") {
+    const dl = tryDownload();
+    if (dl.result === "downloaded") return dl;
+    const sh = await tryShare();
+    if (sh) return sh;
+    return dl; // surface the original failure if neither worked
+  }
+  const sh = await tryShare();
+  if (sh) return sh;
+  return tryDownload();
+}
+
+// Public API. Returns { result, uri?, error? }.
+//
+// blob       — the file contents
+// filename   — name shown in the share sheet / used for the download
+// title      — share-sheet metadata title (Android system text)
+// dialogTitle — Android-only share-sheet title bar text
+// prefer     — "share" (default) | "download". Web target only —
+//              backup-style "save this to my device" callers pass
+//              "download" so the anchor-download path is tried
+//              before navigator.share.
+export async function shareFile({ blob, filename, title, dialogTitle, prefer = "share" }) {
+  if (!(blob instanceof Blob)) {
+    return { result: "failed", error: "not_a_blob" };
+  }
+  if (isNative()) {
+    return shareNative(blob, filename, title || filename, dialogTitle);
+  }
+  return shareWeb(blob, filename, title || filename, prefer);
+}
+
+// Native-only silent write to the public Documents folder via the
+// Capacitor Filesystem plugin. Used as a secondary fallback after
+// the MediaStore-based saveBlobToPublicDownloads — Filesystem's
+// Directory.Documents path frequently fails on Android 11+ scoped
+// storage (it would need MANAGE_EXTERNAL_STORAGE, which Play Store
+// rarely approves), but on Android 9 and below the legacy storage
+// model lets this through, so it's worth trying as a fallback for
+// older devices in case MediaStore returned a confusing error.
+//
+// Crucially: we do NOT fall back to Directory.External (app-scoped
+// external storage). External is uninstall-wiped, and the whole
+// point of an auto-backup is to survive uninstall. If both
+// MediaStore and Filesystem.Documents fail, the caller should
+// surface a share sheet so the user can pick a survival location.
+//
+// Returns { result, uri?, location?, error? }
+export async function writeFileToDocumentsSilent({ blob, filename }) {
+  if (!isNative()) {
+    return { result: "failed", error: "silent_write_native_only" };
+  }
+  if (!(blob instanceof Blob)) {
+    return { result: "failed", error: "not_a_blob" };
+  }
+  try {
+    const { Filesystem, Directory } = await import("@capacitor/filesystem");
+    const uri = await writeBlobChunked(Filesystem, { blob, path: filename, directory: Directory.Documents });
+    console.log("[shareFile] silent write OK → Documents:", uri);
+    return { result: "filesystem", uri, location: "Documents" };
+  } catch (e) {
+    console.warn("[shareFile] Documents write failed:", e?.message || e);
+    return { result: "failed", error: e?.message || "write_failed" };
+  }
+}
