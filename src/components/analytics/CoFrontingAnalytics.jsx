@@ -1,0 +1,386 @@
+import React, { useMemo, useState, useEffect, useRef } from "react";
+import { useFrontLevels, filterCountedSessions } from "@/lib/frontLevels";
+import { startOfDay, endOfDay } from "date-fns";
+import { useTerms } from "@/lib/useTerms";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { Card } from "@/components/ui/card";
+import {
+  normalizeSessions,
+  sessionsInRange,
+  sliceByOverlap,
+} from "@/lib/sessionNormalizer";
+
+function MatrixPopover({ content, onClose }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onClose]);
+  return (
+    <div ref={ref} className="absolute z-50 bg-card border border-border rounded-lg shadow-lg p-3 text-xs min-w-[140px] pointer-events-auto"
+      style={{ top: "100%", left: "50%", transform: "translateX(-50%)", marginTop: 4 }}>
+      {content}
+    </div>
+  );
+}
+
+export default function CoFrontingAnalytics({ sessions: sessionsProp = [], alters = [], altersById = {}, from, to }) {
+  // Fronting levels (opt-in): non-counting levels are excluded here too.
+  const levelCfg = useFrontLevels();
+  const sessions = useMemo(() => filterCountedSessions(sessionsProp, levelCfg), [sessionsProp, levelCfg]);
+  const terms = useTerms();
+  const [activePopover, setActivePopover] = useState(null); // { key, content }
+  const cofrontingLabel = terms.Cofronting;
+
+  // All three useMemos below run on a single normalised + range-
+  // clamped slice sweep so unclosed sessions don't leak past the
+  // range end (was the "5085h solo in 30d" bug) and the legacy
+  // group model + individual model produce consistent results.
+  const { coFrontingPairs, alterSoloVsCo, coFrontingByHour } = useMemo(() => {
+    const fromMs = startOfDay(from).getTime();
+    const toMs = endOfDay(to).getTime();
+    const now = Date.now();
+    const normalised = normalizeSessions(sessions, now);
+    const inRange = sessionsInRange(normalised, fromMs, toMs, now);
+    const slices = sliceByOverlap(inRange, fromMs, toMs, now);
+
+    // Pairs: every multi-alter slice contributes overlap time +
+    // an occurrence to each pair of alters active in it.
+    const pairs = {};
+    const addPair = (idA, idB, overlap) => {
+      if (!idA || !idB || idA === idB) return;
+      const sorted = [idA, idB].sort();
+      const pairKey = sorted.join("--");
+      if (!pairs[pairKey]) {
+        pairs[pairKey] = { alterIdA: sorted[0], alterIdB: sorted[1], totalOverlap: 0, occurrences: 0 };
+      }
+      pairs[pairKey].totalOverlap += overlap;
+      pairs[pairKey].occurrences += 1;
+    };
+
+    // Per-alter solo vs co buckets, sourced from slice attribution
+    // (solo = only-alter slices; co = multi-alter slices).
+    const buckets = {};
+    for (const a of alters) {
+      if (!a.is_archived) buckets[a.id] = { alter: a, soloTime: 0, coTime: 0 };
+    }
+
+    // Co-fronting by hour: each multi-alter slice marks the
+    // hour(s) it spans. One hour can be marked by many slices —
+    // the chart shows total minutes-of-co-fronting per hour-of-day.
+    const hourMinutes = new Array(24).fill(0);
+
+    for (const slice of slices) {
+      const ids = [...slice.aliveAlterIds];
+      const dur = slice.endMs - slice.startMs;
+      if (dur <= 0) continue;
+
+      // Solo vs co attribution
+      const isSolo = ids.length === 1;
+      for (const id of ids) {
+        const b = buckets[id];
+        if (!b) continue;
+        if (isSolo) b.soloTime += dur;
+        else b.coTime += dur;
+      }
+
+      if (ids.length < 2) continue;
+
+      // Pair counts
+      for (let i = 0; i < ids.length; i++) {
+        for (let j = i + 1; j < ids.length; j++) {
+          addPair(ids[i], ids[j], dur);
+        }
+      }
+
+      // Hour buckets — distribute the slice across the hour(s)
+      // it touches, in minutes, so a 90-minute slice that starts
+      // at 14:30 adds 30min to hour 14 and 60min to hour 15.
+      let cursor = slice.startMs;
+      while (cursor < slice.endMs) {
+        const d = new Date(cursor);
+        const hour = d.getHours();
+        const nextHourBoundary = new Date(d.getFullYear(), d.getMonth(), d.getDate(), hour + 1, 0, 0, 0).getTime();
+        const segEnd = Math.min(nextHourBoundary, slice.endMs);
+        hourMinutes[hour] += (segEnd - cursor) / 60000;
+        cursor = segEnd;
+      }
+    }
+
+    return {
+      coFrontingPairs: Object.values(pairs).sort((a, b) => b.totalOverlap - a.totalOverlap),
+      alterSoloVsCo: Object.values(buckets)
+        .map((b) => ({ ...b, total: b.soloTime + b.coTime }))
+        .filter((d) => d.total > 0)
+        .sort((a, b) => b.total - a.total),
+      coFrontingByHour: hourMinutes.map((m) => Math.round(m)),
+    };
+  }, [sessions, alters, from, to]);
+
+  // Co-fronting matrix
+  const matrixAlters = useMemo(() => {
+    const normalised = normalizeSessions(sessions);
+    const everSeenAlterIds = new Set();
+    for (const s of normalised) {
+      for (const id of s.alterIds) everSeenAlterIds.add(id);
+    }
+    return alters.filter((a) => !a.is_archived && everSeenAlterIds.has(a.id));
+  }, [alters, sessions]);
+
+  const getCellValue = (idA, idB) => {
+    const key = [idA, idB].sort().join("--");
+    const pair = coFrontingPairs.find(
+      (p) =>
+        (p.alterIdA === idA && p.alterIdB === idB) ||
+        (p.alterIdA === idB && p.alterIdB === idA)
+    );
+    return pair?.totalOverlap || 0;
+  };
+
+  const maxValue = coFrontingPairs.length > 0 ? coFrontingPairs[0].totalOverlap : 1;
+
+  const chartData = Array.from({ length: 24 }, (_, i) => ({
+    hour: `${i}:00`,
+    pairs: coFrontingByHour[i],
+  }));
+
+  return (
+    <div className="space-y-6">
+      {/* Most frequent co-fronting pairs */}
+      {coFrontingPairs.length > 0 ? (
+        <Card className="p-6">
+          <h2 className="text-lg font-semibold mb-4">Most Frequent {terms.Cofronting} Pairs</h2>
+          <div className="space-y-3">
+            {coFrontingPairs.slice(0, 10).map((pair) => {
+              const alterA = altersById[pair.alterIdA];
+              const alterB = altersById[pair.alterIdB];
+              const hours = Math.floor(pair.totalOverlap / 3600000);
+              const mins = Math.floor((pair.totalOverlap % 3600000) / 60000);
+
+              return (
+                <div
+                  key={`${pair.alterIdA}--${pair.alterIdB}`}
+                  className="flex items-center gap-3 p-3 rounded-xl border border-border/50 bg-card/50 hover:bg-muted/30 transition-colors"
+                >
+                  <div className="flex items-center gap-1">
+                    <div
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0"
+                      style={{ backgroundColor: alterA?.color || "#8b5cf6" }}
+                    >
+                      {alterA?.name?.charAt(0)?.toUpperCase()}
+                    </div>
+                    <span className="text-xs text-muted-foreground">+</span>
+                    <div
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0"
+                      style={{ backgroundColor: alterB?.color || "#8b5cf6" }}
+                    >
+                      {alterB?.name?.charAt(0)?.toUpperCase()}
+                    </div>
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-foreground">
+                      {alterA?.name} + {alterB?.name}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {pair.occurrences} times · {hours}h {mins}m total
+                    </p>
+                  </div>
+                  <div className="w-20 h-2 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-primary"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          (pair.totalOverlap / coFrontingPairs[0]?.totalOverlap) * 100
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      ) : (
+        <Card className="p-6">
+          <p className="text-muted-foreground text-sm">No {terms.cofronting} data in this date range.</p>
+        </Card>
+      )}
+
+      {/* Co-fronting matrix heatmap */}
+      {matrixAlters.length > 0 && (
+        <Card className="p-6">
+          <h2 className="text-lg font-semibold mb-4">{terms.Cofronting} Matrix</h2>
+          <div className="overflow-x-auto">
+            <div className="inline-block min-w-full">
+              {/* Column headers */}
+              <div className="flex">
+                <div className="w-24 flex-shrink-0" />
+                {matrixAlters.map((a) => {
+                  const key = `header-${a.id}`;
+                  const isOpen = activePopover?.key === key;
+                  return (
+                    <div
+                      key={key}
+                      className="w-12 h-12 flex items-center justify-center flex-shrink-0 relative"
+                      onClick={() => setActivePopover(isOpen ? null : { key })}
+                    >
+                      <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-white font-bold text-xs cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all"
+                        style={{ backgroundColor: a.color || "#8b5cf6" }}
+                      >
+                        {a.name?.charAt(0)?.toUpperCase()}
+                      </div>
+                      {isOpen && (
+                        <MatrixPopover
+                          content={<span className="font-semibold text-foreground">{a.name}</span>}
+                          onClose={() => setActivePopover(null)}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Rows */}
+              {matrixAlters.map((alterA) => (
+                <div key={`row-${alterA.id}`} className="flex">
+                  {/* Row label */}
+                  {(() => {
+                    const key = `rowlabel-${alterA.id}`;
+                    const isOpen = activePopover?.key === key;
+                    return (
+                      <div
+                        className="w-24 flex-shrink-0 flex items-center pr-2 relative cursor-pointer hover:text-primary transition-colors"
+                        onClick={() => setActivePopover(isOpen ? null : { key })}
+                      >
+                        <span className="text-xs font-medium text-foreground truncate">{alterA.name}</span>
+                        {isOpen && (
+                          <MatrixPopover
+                            content={<span className="font-semibold text-foreground">{alterA.name}</span>}
+                            onClose={() => setActivePopover(null)}
+                          />
+                        )}
+                      </div>
+                    );
+                  })()}
+                  {matrixAlters.map((alterB) => {
+                    const value = getCellValue(alterA.id, alterB.id);
+                    const intensity = maxValue > 0 ? value / maxValue : 0;
+                    const hours = Math.floor(value / 3600000);
+                    const mins = Math.floor((value % 3600000) / 60000);
+                    const cellKey = `cell-${alterA.id}-${alterB.id}`;
+                    const isOpen = activePopover?.key === cellKey;
+                    const isSelf = alterA.id === alterB.id;
+
+                    return (
+                      <div
+                        key={cellKey}
+                        className="w-12 h-12 flex items-center justify-center flex-shrink-0 border border-border/20 text-xs font-semibold hover:border-border transition-colors relative cursor-pointer"
+                        style={{
+                          backgroundColor: intensity > 0
+                            ? `rgba(59, 130, 246, ${Math.max(0.1, intensity)})`
+                            : "transparent",
+                        }}
+                        onClick={() => setActivePopover(isOpen ? null : { key: cellKey })}
+                      >
+                        {value > 0 && (
+                          <span className="text-foreground text-xs">
+                            {hours > 0 ? `${hours}h` : `${mins}m`}
+                          </span>
+                        )}
+                        {isOpen && (
+                          <MatrixPopover
+                            content={
+                              isSelf ? (
+                                <span className="font-semibold text-foreground">{alterA.name}</span>
+                              ) : (
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: alterA.color || "#8b5cf6" }} />
+                                    <span className="font-semibold text-foreground">{alterA.name}</span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
+                                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: alterB.color || "#8b5cf6" }} />
+                                    <span className="font-semibold text-foreground">{alterB.name}</span>
+                                  </div>
+                                  <div className="pt-1 border-t border-border/40 text-muted-foreground">
+                                    {value > 0 ? `${hours}h ${mins}m together` : "No overlap"}
+                                  </div>
+                                </div>
+                              )
+                            }
+                            onClose={() => setActivePopover(null)}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Time of day co-fronting */}
+      <Card className="p-6">
+        <h2 className="text-lg font-semibold mb-4">Time of Day {terms.Cofronting}</h2>
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+            <XAxis dataKey="hour" />
+            <YAxis />
+            <Tooltip contentStyle={{ backgroundColor: "var(--card)", border: "1px solid var(--border)" }} />
+            <Legend />
+            <Bar
+              dataKey="pairs"
+              fill="var(--color-primary)"
+              name={`Active ${cofrontingLabel} Pairs`}
+              radius={[8, 8, 0, 0]}
+            />
+          </BarChart>
+        </ResponsiveContainer>
+      </Card>
+
+      {/* Solo vs co-fronting breakdown */}
+      {alterSoloVsCo.length > 0 && (
+        <Card className="p-6">
+          <h2 className="text-lg font-semibold mb-4">Solo vs {terms.Cofronting} Breakdown</h2>
+          <div className="space-y-4">
+            {alterSoloVsCo.map(({ alter, soloTime, coTime, total }) => {
+              const soloPct = total > 0 ? (soloTime / total) * 100 : 0;
+              const coPct = total > 0 ? (coTime / total) * 100 : 0;
+              const soloHours = Math.floor(soloTime / 3600000);
+              const coHours = Math.floor(coTime / 3600000);
+
+              return (
+                <div key={alter.id} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-foreground">{alter.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {soloHours}h solo · {coHours}h {terms.cofronting}
+                    </p>
+                  </div>
+                  <div className="flex h-3 rounded-full overflow-hidden bg-muted/50">
+                    <div
+                      className="bg-primary transition-all"
+                      style={{ width: `${soloPct}%` }}
+                      title={`Solo: ${soloHours}h`}
+                    />
+                    <div
+                      className="bg-accent transition-all"
+                      style={{ width: `${coPct}%` }}
+                      title={`Co-fronting: ${coHours}h`}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}

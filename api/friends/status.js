@@ -1,0 +1,71 @@
+// GET /api/friends/status?userId=X&viewerUserId=Y&viewerSecret=Z
+// Returns front status of userId if viewerUserId is an approved friend.
+import { kv, getProfile, getFriends, validateUser, cors, isKvConfigured } from '../_kv.js';
+
+export default async function handler(req, res) {
+  cors(res, req);
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  // POST (credentials in the body) is the supported form as of v0.181.0 —
+  // a bearer secret in a query string lands in access/CDN/proxy logs. GET
+  // is still accepted for clients that haven't updated yet.
+  if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).end();
+
+  if (!isKvConfigured()) {
+    return res.status(503).json({ error: 'Not configured.' });
+  }
+
+  const { userId, viewerUserId, viewerSecret } = req.method === 'POST' ? (req.body || {}) : req.query;
+
+  if (!userId || !viewerUserId || !viewerSecret) {
+    return res.status(400).json({ error: 'Missing parameters.' });
+  }
+
+  // Authenticate viewer
+  if (!await validateUser(viewerUserId, viewerSecret)) {
+    return res.status(401).json({ error: 'Invalid viewer credentials.' });
+  }
+
+  // Check that viewerUserId is an approved friend of userId
+  const ownerFriends = await getFriends(userId);
+  const relationship = ownerFriends[viewerUserId];
+  if (!relationship || relationship.status !== 'approved') {
+    return res.status(403).json({ error: 'Not friends.' });
+  }
+
+  const [frontDefault, frontForViewer, profile] = await Promise.all([
+    kv.get(`user:${userId}:front`),
+    kv.get(`user:${userId}:front:${viewerUserId}`),  // per-friend override
+    getProfile(userId),
+  ]);
+
+  // Per-friend blob takes precedence over the default
+  const frontData = frontForViewer || frontDefault;
+
+  if (!frontData) {
+    return res.status(200).json({
+      fronters: [],
+      terms: profile?.terms || {},
+      systemName: profile?.systemName || '',
+      displayName: profile?.displayName || 'A friend',
+      privacyLevel: profile?.privacyLevel || 'names',
+      updatedAt: null,
+    });
+  }
+
+  // Apply privacy level
+  let fronters = frontData.fronters || [];
+  if (frontData.privacyLevel === 'count_only') {
+    fronters = fronters.map(() => ({ name: '?', initial: '?', color: null, isPrimary: false }));
+  } else if (frontData.privacyLevel === 'hidden') {
+    fronters = [];
+  }
+
+  return res.status(200).json({
+    fronters,
+    terms: frontData.terms || {},
+    systemName: frontData.systemName || profile?.systemName || '',
+    displayName: frontData.displayName || profile?.displayName || 'A friend',
+    privacyLevel: frontData.privacyLevel || 'names',
+    updatedAt: frontData.updatedAt,
+  });
+}

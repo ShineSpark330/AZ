@@ -1,0 +1,348 @@
+import React, { forwardRef, useRef, useState, useMemo, useCallback, useImperativeHandle, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
+import { ChevronRight } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { useQuery } from "@tanstack/react-query";
+import { base44 } from "@/api/base44Client";
+import { useTerms } from "@/lib/useTerms";
+import { useAlterLabel } from "@/lib/useAlterLabel";
+import { effectiveAlias } from "@/lib/alterLabel";
+import { useResolvedAvatarUrl } from "@/hooks/useResolvedAvatarUrl";
+import { getAlterIdsByGroupFlag } from "@/lib/subsystemUtils";
+import { detectCommandToken, buildCommandSuggestions, buildCatalogues } from "@/lib/logCommands";
+
+// One reusable textarea with @mention (always) + -signpost (opt-in via
+// `signposts`) autocomplete, so every surface shares the same behaviour
+// instead of re-implementing it. The host owns the value (`value` /
+// `onChange(stringValue)`); the underlying <textarea> ref is forwarded so a
+// host can still run formatting-toolbar inserts (useTextareaInsert) on it.
+//
+// Cursor-aware: the "open" token is the @/- token at the CARET (not just the
+// last @ in the string), so mentions work when editing mid-text too.
+
+const WS = /\s/;
+
+// The @/-/+ token the caret currently sits inside. A token starts with @, -,
+// or + at a word boundary (start, or after whitespace) and can't contain
+// whitespace. Both - (set sole author) and + (add an author) open the same
+// signpost picker; we remember which prefix was typed so the inserted token
+// keeps the user's intent. Hyphens mid-word (well-being, 2024-01) are NOT
+// signpost starts.
+function detectToken(value, caret) {
+  let i = caret - 1;
+  while (i >= 0) {
+    const ch = value[i];
+    if (WS.test(ch)) return null;
+    const prev = i > 0 ? value[i - 1] : "";
+    if ((ch === "@" || ch === "-" || ch === "+") && (i === 0 || WS.test(prev))) {
+      return {
+        type: ch === "@" ? "mention" : "signpost",
+        prefix: ch,
+        start: i,
+        query: value.slice(i + 1, caret),
+      };
+    }
+    i -= 1;
+  }
+  return null;
+}
+
+function SuggestionRow({ alter, label, onSelect }) {
+  const avatar = useResolvedAvatarUrl(alter?.avatar_url);
+  return (
+    <button
+      type="button"
+      onMouseDown={(e) => { e.preventDefault(); onSelect(); }}
+      className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-muted/50 transition-colors text-sm"
+    >
+      <span className="w-5 h-5 rounded-full overflow-hidden flex items-center justify-center flex-shrink-0 text-[0.625rem] font-bold text-white"
+        style={{ backgroundColor: alter?.color || "#8b5cf6" }}>
+        {avatar ? <img src={avatar} alt="" className="w-full h-full object-cover" /> : (label || "?").slice(0, 1).toUpperCase()}
+      </span>
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
+const MentionTextarea = forwardRef(function MentionTextarea(
+  { value = "", onChange, alters = [], signposts = false, commands = true, systemName, placeholder, className, rows, ...textareaProps },
+  forwardedRef
+) {
+  const terms = useTerms();
+  const formatAlter = useAlterLabel();
+  const innerRef = useRef(null);
+  useImperativeHandle(forwardedRef, () => innerRef.current, []);
+
+  const [menu, setMenu] = useState(null); // { type, start, query } | { type:"command", start, segments }
+
+  // Alters a group hid from mention/signpost suggestions (typing a full name
+  // still resolves; they're just not suggested).
+  const { data: groups = [] } = useQuery({ queryKey: ["groups"], queryFn: () => base44.entities.Group.list() });
+  const hidden = useMemo(() => getAlterIdsByGroupFlag(groups, alters, "hide_from_mentions"), [groups, alters]);
+
+  // Catalogues for ~command autocomplete (own namespaced keys so we never
+  // pollute another consumer's cache; react-query dedupes across instances).
+  const { data: cmdSymptoms = [] } = useQuery({ queryKey: ["logcmd", "symptoms"], queryFn: () => base44.entities.Symptom.list(), enabled: commands });
+  const { data: cmdContacts = [] } = useQuery({ queryKey: ["logcmd", "contacts"], queryFn: () => base44.entities.Contact.list(), enabled: commands });
+  const { data: cmdActivityCats = [] } = useQuery({ queryKey: ["logcmd", "activityCategories"], queryFn: () => base44.entities.ActivityCategory.list(), enabled: commands });
+  const { data: cmdCustomEmotions = [] } = useQuery({ queryKey: ["logcmd", "customEmotions"], queryFn: () => base44.entities.CustomEmotion.list(), enabled: commands });
+  const catalogues = useMemo(
+    () => buildCatalogues({ symptoms: cmdSymptoms, contacts: cmdContacts, activityCategories: cmdActivityCats, customEmotions: cmdCustomEmotions }),
+    [cmdSymptoms, cmdContacts, cmdActivityCats, cmdCustomEmotions]
+  );
+
+  const sysToken = terms.system || "system";
+  const sysLabel = systemName || terms.System || "System";
+
+  const suggestions = useMemo(() => {
+    if (!menu) return [];
+    const q = (menu.query || "").toLowerCase();
+    return alters
+      .filter((a) => !a.is_archived && !hidden.has(a.id))
+      .filter((a) => !q || a.name?.toLowerCase().includes(q) || (a.alias && a.alias.toLowerCase().includes(q)) || (a.use_emoji_as_alias && a.emoji && a.emoji.includes(q)))
+      .slice(0, 8);
+  }, [menu, alters, hidden]);
+
+  const showSystemRow = useMemo(() => {
+    if (!menu || menu.type !== "signpost") return false;
+    const q = (menu.query || "").toLowerCase();
+    if (!q) return true;
+    return "system".startsWith(q) || sysToken.toLowerCase().startsWith(q)
+      || (typeof sysLabel === "string" && sysLabel.toLowerCase().split(/\s+/).some((t) => t.startsWith(q)));
+  }, [menu, sysToken, sysLabel]);
+
+  const commandMenu = useMemo(() => {
+    if (!menu || menu.type !== "command") return null;
+    return buildCommandSuggestions({ segments: menu.segments, catalogues });
+  }, [menu, catalogues]);
+
+  const recompute = useCallback((val, caret) => {
+    if (commands) {
+      const cmd = detectCommandToken(val, caret);
+      if (cmd) { setMenu({ type: "command", start: cmd.start, segments: cmd.segments }); return; }
+    }
+    const tok = detectToken(val, caret);
+    if (!tok || (tok.type === "signpost" && !signposts)) { setMenu(null); return; }
+    setMenu(tok);
+  }, [signposts, commands]);
+
+  const handleChange = (e) => {
+    const val = e.target.value;
+    onChange(val);
+    recompute(val, e.target.selectionStart ?? val.length);
+  };
+
+  const handleCaret = (e) => recompute(value, e.target.selectionStart ?? value.length);
+
+  const insert = (token) => {
+    const ta = innerRef.current;
+    const caret = ta ? (ta.selectionStart ?? value.length) : value.length;
+    const tok = detectToken(value, caret);
+    if (!tok) { setMenu(null); return; }
+    // Keep the prefix the user actually typed (- = sole author, + = add).
+    const prefix = tok.prefix || (tok.type === "mention" ? "@" : "-");
+    const before = value.slice(0, tok.start);
+    const after = value.slice(caret);
+    const insertText = `${prefix}${token} `;
+    onChange(before + insertText + after);
+    setMenu(null);
+    const newCaret = before.length + insertText.length;
+    // Re-assert focus synchronously (within the tap gesture) so the mobile
+    // keyboard doesn't drop when a suggestion is picked, then fix the caret
+    // once React has applied the new value.
+    ta?.focus();
+    requestAnimationFrame(() => {
+      ta?.focus();
+      try { ta?.setSelectionRange(newCaret, newCaret); } catch { /* detached */ }
+    });
+  };
+
+  // Insert a picked ~command suggestion, re-writing the command up to this
+  // stage. `continue` picks append ":" and keep the dropdown open for the next
+  // stage; terminal picks append a space and close.
+  const insertCommand = (pick) => {
+    const ta = innerRef.current;
+    const caret = ta ? (ta.selectionStart ?? value.length) : value.length;
+    const cmd = detectCommandToken(value, caret);
+    if (!cmd) { setMenu(null); return; }
+    const body = [...cmd.segments.slice(0, -1), pick.insert].join(":");
+    const before = value.slice(0, cmd.start);
+    const after = value.slice(caret);
+    // Non-terminal → append ":" and advance to the next section; terminal →
+    // just place the value (no auto-space, no colon). The header chevron is the
+    // only thing that ends the command with a space.
+    const insertText = "~" + body + (pick.terminal ? "" : ":");
+    const newValue = before + insertText + after;
+    onChange(newValue);
+    const newCaret = before.length + insertText.length;
+    if (pick.terminal) setMenu(null);
+    ta?.focus();
+    requestAnimationFrame(() => {
+      ta?.focus();
+      try { ta?.setSelectionRange(newCaret, newCaret); } catch { /* detached */ }
+      if (!pick.terminal) recompute(newValue, newCaret);
+    });
+  };
+
+  // Header chevron — "log it / finish": drop a trailing ":" and end the command
+  // with a space (the only place a space is auto-added).
+  const finishCommand = () => {
+    const ta = innerRef.current;
+    const caret = ta ? (ta.selectionStart ?? value.length) : value.length;
+    const cmd = detectCommandToken(value, caret);
+    if (!cmd) { setMenu(null); return; }
+    const before = value.slice(0, cmd.start);
+    const after = value.slice(caret);
+    const insertText = "~" + cmd.body.replace(/:$/, "") + " ";
+    const newValue = before + insertText + after;
+    onChange(newValue);
+    setMenu(null);
+    const newCaret = before.length + insertText.length;
+    ta?.focus();
+    requestAnimationFrame(() => { ta?.focus(); try { ta?.setSelectionRange(newCaret, newCaret); } catch { /* detached */ } });
+  };
+
+  const open = !!menu && (
+    menu.type === "command"
+      ? !!(commandMenu && (commandMenu.items.length || commandMenu.canFinish))
+      : (suggestions.length > 0 || (menu.type === "signpost" && showSystemRow))
+  );
+
+  // Token to insert for a picked suggestion. Mentions use the emoji-as-alias
+  // (@😀 resolves); signposts insert the text alias/name because the `-` parser
+  // matches words, not emoji (bare emoji are the separate emoji-signpost path).
+  const tokenFor = (a) => (menu?.type === "mention" ? (effectiveAlias(a) || a.name) : (a.alias || a.name));
+
+  // Accept the first/best suggestion (Enter or Tab while the menu is open).
+  // Returns true if something was inserted so the caller can swallow the key
+  // (e.g. so Enter picks a suggestion instead of sending the message).
+  const pickFirst = () => {
+    if (!open) return false;
+    if (menu.type === "command") {
+      if (commandMenu?.items?.[0]) { insertCommand(commandMenu.items[0]); return true; }
+      if (commandMenu?.canFinish) { finishCommand(); return true; }
+      return false;
+    }
+    if (suggestions[0]) { insert(tokenFor(suggestions[0])); return true; }
+    if (menu.type === "signpost" && showSystemRow) { insert(sysToken); return true; }
+    return false;
+  };
+
+  // PORTALED, fixed-position menu — the suggestion list used to render
+  // absolutely INSIDE the host container, and any clipping ancestor (a
+  // widget box's overflow:hidden, a sheet) cut it to a sliver. Same
+  // pattern as SearchableSelect: anchor to the textarea's rect, prefer
+  // above, fall below when there's no headroom, clamp to the viewport.
+  const [menuPos, setMenuPos] = useState(null);
+  useLayoutEffect(() => {
+    if (!open) { setMenuPos(null); return undefined; }
+    const place = () => {
+      const r = innerRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const W = Math.min(Math.max(r.width, 240), window.innerWidth - 16);
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8));
+      const above = r.top > 200;
+      setMenuPos(above
+        ? { left, width: W, bottom: window.innerHeight - r.top + 4 }
+        : { left, width: W, top: r.bottom + 4 });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => { window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
+  }, [open, menu?.start]);
+
+  return (
+    <div className="relative">
+      <Textarea
+        {...textareaProps}
+        ref={innerRef}
+        value={value}
+        rows={rows}
+        className={className}
+        placeholder={placeholder ?? `Type a note… use @ to mention an ${terms.alter}`}
+        onChange={handleChange}
+        onClick={handleCaret}
+        onKeyUp={(e) => {
+          if (e.key === "Escape") setMenu(null);
+          else if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) handleCaret(e);
+          textareaProps.onKeyUp?.(e);
+        }}
+        onKeyDown={(e) => {
+          if (open) {
+            if (e.key === "Escape") { e.stopPropagation(); setMenu(null); return; }
+            if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+              // Menu open → Enter/Tab accepts the suggestion instead of
+              // sending / inserting a newline. Don't delegate to the host
+              // (its Enter handler would also fire and send the message).
+              if (pickFirst()) { e.preventDefault(); return; }
+            }
+          }
+          textareaProps.onKeyDown?.(e);
+        }}
+        onBlur={(e) => { setTimeout(() => setMenu(null), 120); textareaProps.onBlur?.(e); }}
+      />
+      {open && menuPos && createPortal(
+        <div className="fixed z-[240] bg-popover border border-border rounded-xl shadow-lg max-h-44 overflow-y-auto overscroll-contain"
+          style={menuPos}>
+          {menu.type === "command" ? (
+            <>
+              <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border/50">
+                <span className="text-xs text-muted-foreground font-medium">{commandMenu.icon} {commandMenu.header}</span>
+                {commandMenu.canFinish && (
+                  <button
+                    type="button"
+                    title="Log it — finish the command"
+                    onMouseDown={(e) => { e.preventDefault(); finishCommand(); }}
+                    className="flex items-center justify-center w-6 h-6 -mr-1 rounded-md text-primary hover:bg-primary/15 transition-colors"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+              {commandMenu.items.map((it, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); insertCommand(it); }}
+                  className="w-full flex items-center px-3 py-1.5 text-left hover:bg-muted/50 transition-colors text-sm"
+                >
+                  <span className="truncate">{it.insert}</span>
+                </button>
+              ))}
+            </>
+          ) : (
+          <>
+          {menu.type === "signpost" && (
+            <div className="px-3 py-1.5 text-xs text-muted-foreground font-medium border-b border-border/50">
+              {menu.prefix === "+" ? "Add an author…" : "Sign as author…"}
+            </div>
+          )}
+          {menu.type === "signpost" && showSystemRow && (
+            <button
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); insert(sysToken); }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-muted/50 transition-colors text-sm"
+            >
+              <span className="w-5 h-5 rounded-full bg-primary/15 text-primary flex items-center justify-center flex-shrink-0 text-[0.625rem] font-bold">✶</span>
+              <span className="truncate">{sysLabel} <span className="text-muted-foreground">(whole {terms.system || "system"})</span></span>
+            </button>
+          )}
+          {suggestions.map((a) => (
+            <SuggestionRow
+              key={a.id}
+              alter={a}
+              label={formatAlter ? formatAlter(a) : (effectiveAlias(a) || a.name)}
+              onSelect={() => insert(tokenFor(a))}
+            />
+          ))}
+          </>
+          )}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+});
+
+export default MentionTextarea;

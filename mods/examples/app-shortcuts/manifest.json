@@ -1,0 +1,13 @@
+{
+  "format": "oceans-symphony-mod",
+  "formatVersion": 1,
+  "id": "app-shortcuts",
+  "name": "App shortcuts",
+  "version": "1.0.0",
+  "author": "Apeiron Zetta",
+  "description": "A board of shortcuts to the apps you use. Tap one to open the app on this device; if it isn't installed it says so and offers its link. Suggests apps it finds on your device, and every shortcut (name, app, link, icon, colour, group, order) is yours to edit.",
+  "permissions": ["apps:launch"],
+  "pages": [
+    { "id": "shortcuts", "title": "App shortcuts" }
+  ]
+}

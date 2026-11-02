@@ -1,0 +1,1081 @@
+/* Core UI fonts — bundled locally, no CDN.
+   Latin + Latin-Ext subsets only to keep the bundle small. Users typing in
+   Cyrillic / Greek / Arabic / Devanagari etc. will see their chosen font
+   fall back to the system default. Opt-in download of additional subsets
+   is planned for a future release. */
+@import '@fontsource/inter/latin-300.css';
+@import '@fontsource/inter/latin-ext-300.css';
+@import '@fontsource/inter/latin-400.css';
+@import '@fontsource/inter/latin-ext-400.css';
+@import '@fontsource/inter/latin-500.css';
+@import '@fontsource/inter/latin-ext-500.css';
+@import '@fontsource/inter/latin-600.css';
+@import '@fontsource/inter/latin-ext-600.css';
+@import '@fontsource/inter/latin-700.css';
+@import '@fontsource/inter/latin-ext-700.css';
+@import '@fontsource/playfair-display/latin-400.css';
+@import '@fontsource/playfair-display/latin-ext-400.css';
+@import '@fontsource/playfair-display/latin-500.css';
+@import '@fontsource/playfair-display/latin-ext-500.css';
+@import '@fontsource/playfair-display/latin-600.css';
+@import '@fontsource/playfair-display/latin-ext-600.css';
+@import '@fontsource/playfair-display/latin-700.css';
+@import '@fontsource/playfair-display/latin-ext-700.css';
+@import '@fontsource/dm-serif-display/latin-400.css';
+@import '@fontsource/dm-serif-display/latin-ext-400.css';
+@import '@fontsource/atkinson-hyperlegible/latin-400.css';
+@import '@fontsource/atkinson-hyperlegible/latin-ext-400.css';
+@import '@fontsource/atkinson-hyperlegible/latin-700.css';
+@import '@fontsource/atkinson-hyperlegible/latin-ext-700.css';
+@import '@fontsource/nunito/latin-400.css';
+@import '@fontsource/nunito/latin-ext-400.css';
+@import '@fontsource/nunito/latin-500.css';
+@import '@fontsource/nunito/latin-ext-500.css';
+@import '@fontsource/nunito/latin-600.css';
+@import '@fontsource/nunito/latin-ext-600.css';
+@import '@fontsource/nunito/latin-700.css';
+@import '@fontsource/nunito/latin-ext-700.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Hide scrollbars while keeping scroll functionality */
+.overflow-y-auto::-webkit-scrollbar {
+  display: none;
+}
+/* Same rule for widget internals: their scrollers are often styled inline
+   (height/overflow from the size system), which dodges the class selector
+   above and leaks the default browser scrollbar. */
+[data-widget-content]::-webkit-scrollbar,
+[data-widget-content] *::-webkit-scrollbar {
+  display: none;
+}
+[data-widget-content],
+[data-widget-content] * {
+  scrollbar-width: none;
+}
+/* Per-widget content size (widget options → "Content size"). Scales
+   everything the widget draws — rows, buttons, avatars, spacing — from the
+   widget's own --v2-control-scale. zoom, not transform, so the content
+   reflows at its new size instead of overlapping its neighbours; and it
+   sits on the body wrapper so every widget responds without needing to opt
+   in. Default 1 = untouched, including on every classic page. */
+[data-widget-content] > [data-widget-body] {
+  zoom: var(--v2-control-scale, 1);
+}
+
+/* Style decoration that a look VARIABLE can't express (gradients). The
+   box itself — border, radius, background, padding, shadow — comes from
+   the look chain now, so a style no longer paints a second box. */
+.os-style-aero {
+  background-image: linear-gradient(135deg,
+    rgb(56 189 248 / 0.25), rgb(103 232 249 / 0.15), rgb(110 231 183 / 0.25));
+}
+
+@layer base {
+  :root {
+    --font-sans: 'Inter', sans-serif;
+    --font-display: 'DM Serif Display', 'Playfair Display', serif;
+
+    --color-bg: #F0F9FF;
+    --color-surface: #E0F2FE;
+    --color-surface-rgb: 224, 242, 254;
+    --color-primary: #3B82F6;
+    --color-secondary: #DBEAFE;
+    --color-accent: #38BDF8;
+    --color-muted: #B6D4E3;
+    --color-text-primary: #1E293B;
+    --color-text-secondary: #64748B;
+
+    --radius: 0.75rem;
+    --bottom-nav-height: 56px;
+    /* The bottom safe area, RESOLVED.
+       On Android the system navigation bar (back / home / recents)
+       overlays an edge-to-edge app, and the WebView's own
+       env(safe-area-inset-bottom) does not always account for it — so
+       fixed bottom controls ended up under the nav buttons and became
+       untappable (tester report). Capacitor publishes the real window
+       insets as --safe-area-inset-* (SystemBars.injectSafeAreaCSS), so
+       every bottom-anchored surface reads THIS variable rather than
+       env() alone.
+       max(), not sum: whichever source knows the true inset wins, and a
+       platform that reports both can never double-pad. Unset anywhere
+       Capacitor isn't running (web, iOS), where env() is authoritative.
+       Do NOT add a window-insets listener on the WebView to feed this —
+       that replaces Chromium's own inset handling, which is what
+       computes env() for the page, and the app bleeds into the status
+       bar (the v0.212.3 regression). Insets belong to Capacitor. */
+    --os-sab: max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px));
+  }
+
+  .dark {
+    --color-bg: #0A0E17;
+    --color-surface: #101820;
+    --color-surface-rgb: 16, 24, 32;
+    --color-primary: #3B82F6;
+    --color-secondary: #1E3A5F;
+    --color-accent: #38BDF8;
+    --color-muted: #1F2937;
+    --color-text-primary: #E0F2FE;
+    --color-text-secondary: #94A3B8;
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--color-muted);
+  }
+
+  html {
+    overscroll-behavior: none;
+  }
+
+body {
+  @apply bg-background text-foreground;
+  font-family: var(--font-sans);
+ 
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  /* While a formatting toolbar is docked above the on-screen keyboard it
+     occludes the bottom of the page — this var (set by useDockHeightVar)
+     adds matching scroll room so everything stays reachable. 0 otherwise. */
+  padding-bottom: var(--os-kb-dock-pad, 0px);
+  overscroll-behavior: none;
+}
+
+  button, a, [role="button"], nav {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  p, span, h1, h2, h3, h4, h5, h6, li, blockquote, .selectable {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
+/* Always reserve the scrollbar gutter on the main scroll container so the
+   centered page content doesn't jump sideways when a vertical scrollbar
+   appears/disappears (e.g. when a composer expands and pushes the page
+   past the viewport). On desktop main is itself the scroller; on overlay-
+   scrollbar platforms this is a no-op. */
+.app-content-main {
+  scrollbar-gutter: stable;
+}
+
+/* The bottom nav is rendered at every viewport below the lg: breakpoint
+   (1024px) — phone portrait, phone landscape, tablet portrait — so the
+   content must reserve space for it across that whole range, not just
+   below 639px. Tracks --bottom-nav-height which the user can resize in
+   Settings → Accessibility. */
+@media (max-width: 1023px) {
+  .app-content-main {
+    padding-bottom: calc(var(--bottom-nav-height, 56px) + 24px + var(--os-sab)) !important;
+  }
+}
+
+/* UI v2's bottom bar is fixed at EVERY width (it only steps aside for the
+   desktop rail), so its clearance can't hang off the phone breakpoint the
+   way the classic bottom nav's does. --bottom-nav-height tracks the bar's
+   measured height, so this also grows when the quick-actions drawer is
+   pulled open — which is when the bar used to cover the last rows of a
+   page. */
+[data-ui-v2="1"] .app-content-main {
+  padding-bottom: calc(var(--bottom-nav-height, 56px) + 24px + var(--os-sab)) !important;
+}
+
+/* The v2 bottom chrome REPLACING the classic tab bar (data-classic-v2-bars,
+   mobile-only): the classic bar hides, content clears the v2 chrome's
+   measured height (+ the floating quick-action card when open). */
+@media (max-width: 1023px) {
+  [data-classic-v2-bars="1"] .os-classic-bottom-nav { display: none !important; }
+  [data-classic-v2-bars="1"] .app-content-main {
+    padding-bottom: calc(var(--v2-bottom-chrome-h, 56px) + 24px + var(--os-sab) + var(--v2-qa-float-bottom-h, 0px)) !important;
+  }
+}
+
+/* The same chrome at DESKTOP width (data-classic-v2-wide — the user's
+   "Show on wide screens"): it sits beside the classic sidebar (w-52), and
+   content clears whatever bars are on. The classic tab bar is already
+   lg:hidden, so nothing needs hiding here. */
+@media (min-width: 1024px) {
+  [data-classic-v2-wide="1"] { --os-classic-sidebar-w: 13rem; }
+  [data-classic-v2-wide="1"] .app-content-main {
+    padding-bottom: calc(var(--v2-bottom-chrome-h, 0px) + 24px + var(--os-sab) + var(--v2-qa-float-bottom-h, 0px)) !important;
+  }
+}
+
+/* The v2 top bar hosted in classic replaces the classic headers only —
+   the rest of the classic chrome (tab bar, sidebar) stays. */
+[data-classic-v2-top="1"] .os-classic-header { display: none !important; }
+
+/* Text-effect keyframes for the formatting toolbar's "fun" effects.
+   Tailwind already ships `spin`; `float` and `wave` were referenced by the
+   toolbar but never defined, so those buttons did nothing — define them
+   here so the effects actually animate. */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-4px); }
+}
+@keyframes wave {
+  from { transform: rotate(-8deg); }
+  to   { transform: rotate(8deg); }
+}
+
+/* Censor / spoiler bar — `||text||` renders as a redaction bar that reveals
+   when tapped (toggled by a delegated click handler in AppLayout). The bar
+   uses the theme text colour so it's visible in both light and dark. */
+.spoiler {
+  background: var(--color-text-primary, #333);
+  color: transparent;
+  border-radius: 3px;
+  padding: 0 3px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 120ms ease;
+}
+.spoiler.revealed {
+  background: transparent;
+  color: inherit;
+  user-select: auto;
+}
+
+/* Whisper — private text addressed to specific alters. Renders as a clearly
+   tappable "🔒 for <names> · tap to reveal" pill; the hidden text is collapsed
+   to zero width (font-size:0) so it never shows as a blank gap. Tapping
+   toggles `.revealed` (delegated handler in AppLayout), which restores the
+   text. `data-whisper-for` carries the recipient names. Works anywhere
+   content renders as rich HTML. */
+.whisper {
+  font-size: 0;          /* collapse the hidden text so it isn't a blank gap */
+  cursor: pointer;
+  user-select: none;
+}
+.whisper::before {
+  content: "🔒 " attr(data-whisper-for) " · tap to reveal";
+  display: inline-block;
+  font-size: 0.78rem;
+  font-style: italic;
+  font-weight: 600;
+  line-height: 1.5;
+  padding: 1px 9px;
+  border-radius: 999px;
+  border: 1px dashed hsl(var(--primary));
+  background: hsl(var(--primary) / 0.14);
+  color: hsl(var(--primary));
+  white-space: normal;
+  vertical-align: baseline;
+}
+.whisper.revealed {
+  font-size: inherit;
+  user-select: auto;
+  background: hsl(var(--primary) / 0.08);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.whisper.revealed::before {
+  content: "🔒 ";
+  display: inline;
+  font-size: 0.8em;
+  font-style: normal;
+  font-weight: normal;
+  border: none;
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  color: hsl(var(--primary));
+}
+
+/* Log chip — an inline "~command" quick-log (symptom / feeling / company /
+   activity) baked into content on save. A small, inert pill so the reader can
+   see what was logged at that point. */
+.log-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25em;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 1px 8px;
+  margin: 0 1px;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--primary) / 0.35);
+  background: hsl(var(--primary) / 0.12);
+  color: hsl(var(--primary));
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+/* ─── App header decoration ──────────────────────────────────────────
+ * The header has a slightly lighter wash on its top half whose bottom
+ * edge is wavy and scrolls slowly sideways — calm-waves motion,
+ * deliberately quiet. The wash is drawn inside HeaderWaveBlock.jsx;
+ * this CSS just provides the slide keyframe.
+ *
+ * The keyframe translates the wave SVG by exactly one viewBox-width
+ * (50% of the 200%-wide element). Because the wave path tiles
+ * seamlessly at that width, the motion loops without a visible jump.
+ * Duration is generous (40s) so the motion reads as ambient rather
+ * than animated.
+ */
+@keyframes app-header-wave-slide {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.app-header-wave-slide {
+  animation: app-header-wave-slide 40s linear infinite;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Honour reduced-motion settings — freeze the wave instead of
+     looping forever. */
+  .app-header-wave-slide { animation: none; }
+}
+
+/* Prevent text from overflowing button/card boundaries at any font scale */
+button, [role="button"] {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* Widget contract: INNER SURFACES follow the widget's look. Components
+   hosted inside widgets (the rich editor, bulletin cards…) paint their own
+   bg-card / bg-background, which ignored the per-widget background — the
+   "background components that cannot be changed" report. When the widget
+   sets a background, classed surfaces inside follow it; unset widgets keep
+   the normal tokens via the var fallback. */
+[data-widget-content] .bg-card { background-color: var(--v2-widget-bg, hsl(var(--card))); }
+[data-widget-content] .bg-background { background-color: var(--v2-widget-bg, hsl(var(--background))); }
+
+/* App-tile / quick-link labels: the rule above let the browser split words
+   at any letter ("Check-In" rendered "Chec / k-In…"). Labels break only at
+   spaces and hyphens; a single over-long word still wraps as a last resort. */
+.os-tile-label {
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+/* ── Page content width ──
+   Shared wrapper width for most pages. Comfortable single-column reading
+   width on phones (matches the old `max-w-2xl mx-auto`), then progressively
+   wider on larger screens so desktop space isn't left half-empty. Widths are
+   in rem so they scale with the UI-size setting. Tune desktop width HERE,
+   once, instead of per page. Used in place of `max-w-2xl mx-auto`. */
+.os-page-shell { margin-left: auto; margin-right: auto; max-width: 42rem; }
+@media (min-width: 1024px) { .os-page-shell { max-width: 56rem; } }
+@media (min-width: 1280px) { .os-page-shell { max-width: 64rem; } }
+@media (min-width: 1536px) { .os-page-shell { max-width: 72rem; } }
+
+/* Native <select> option popups inherit no background, so on a dark theme the
+ * OS popup rendered light while the option text kept the theme's light colour
+ * — near-invisible. Pin options to the theme's surface + text colours (vars are
+ * theme-aware hex, so this stays readable in light themes too). */
+select option {
+  background-color: var(--color-surface, #121a2a);
+  color: var(--color-text-primary, #e5e7eb);
+}
+
+/* ── Quick Check-In vertical rating slider ──
+   The Feeling section's side slider. writing-mode + rtl gives a true vertical
+   range (max at the top) in modern Chromium / Safari / Firefox. accent-color
+   is set inline to the tracked symptom's colour. */
+.qci-vertical-slider {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 1.5rem;
+  height: 120px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+/* ── Dashboard desktop columns ──
+   Phones: a single vertical stack (default block flow). Desktop: the
+   dashboard sections flow into two balanced columns so the screen isn't one
+   tall ribbon. Each section avoids splitting across the column break. The
+   user's configured section ORDER is preserved (read top-to-bottom down the
+   left column, then the right). Only ≥1024px so mobile is unaffected. */
+@media (min-width: 1024px) {
+  .os-dash-cols { column-count: 2; column-gap: 1.25rem; }
+  .os-dash-cols > * { break-inside: avoid; }
+}
+
+/* ── Accessibility ── */
+html.a11y-text-xs3 { font-size: 50%; }
+html.a11y-text-xs2 { font-size: 62.5%; }
+html.a11y-text-xs  { font-size: 75%; }
+html.a11y-text-sm  { font-size: 87.5%; }
+html.a11y-text-lg  { font-size: 112.5%; }
+html.a11y-text-xl  { font-size: 125%; }
+html.a11y-text-xl2 { font-size: 137.5%; }
+html.a11y-text-xl3 { font-size: 150%; }
+html.a11y-text-xl4 { font-size: 175%; }
+html.a11y-text-xl5 { font-size: 200%; }
+
+/* Large-touch min-height is for tappable buttons / links, NOT toggle
+   switches. Radix Switch.Root renders as a <button role="switch">, so
+   without the :not() exclusion the rule stretches the switch track far
+   taller than its designed height — the round thumb then overflows the
+   pill and looks broken (reported on the Daily Tasks toggles). Exclude
+   role="switch" so toggles keep their intended shape; their own hit
+   area is already comfortably tappable. */
+html.a11y-touch-comfortable button:not([role="switch"]),
+html.a11y-touch-comfortable [role="button"]:not([role="switch"]),
+html.a11y-touch-comfortable a[class] {
+  min-height: 44px;
+}
+html.a11y-touch-large button:not([role="switch"]),
+html.a11y-touch-large [role="button"]:not([role="switch"]),
+html.a11y-touch-large a[class] {
+  min-height: 52px;
+}
+
+html.a11y-reduce-motion *,
+html.a11y-reduce-motion *::before,
+html.a11y-reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* High-contrast colour scheme (WCAG 1.4.6 AAA target). Replaces the old weak
+   `filter: contrast()` wash with a real token swap: pure black/white page +
+   text, near-black/near-white secondary text (the old slate-grey secondary was
+   the app's biggest contrast failure), and primary/accent darkened to values
+   that still pass with their hardcoded #FFF button text. These override
+   ThemeContext's inline `--color-*` because stylesheet `!important` beats a
+   non-important inline custom property. Mode-aware via the `.dark` class that
+   ThemeContext toggles. Brand colour is deliberately sacrificed for legibility
+   — this is an opt-in accessibility scheme. */
+html.a11y-high-contrast:not(.dark) {
+  --color-bg: #FFFFFF !important;
+  --color-surface: #FFFFFF !important;
+  --color-surface-rgb: 255, 255, 255 !important;
+  --color-primary: #1D4ED8 !important;
+  --color-secondary: #DBE4FF !important;
+  --color-accent: #0E7490 !important;
+  --color-muted: #767676 !important;       /* visible border + WCAG-min grey */
+  --color-text-primary: #000000 !important;
+  --color-text-secondary: #2A2A2A !important;
+}
+html.a11y-high-contrast.dark {
+  --color-bg: #000000 !important;
+  --color-surface: #000000 !important;
+  --color-surface-rgb: 0, 0, 0 !important;
+  --color-primary: #1D4ED8 !important;
+  --color-secondary: #243B5A !important;
+  --color-accent: #0E7490 !important;
+  --color-muted: #5A5A5A !important;
+  --color-text-primary: #FFFFFF !important;
+  --color-text-secondary: #E0E0E0 !important;
+}
+
+/* ── Accessibility Mode (low vision) — opt-in LAYOUT reconfiguration ──
+   Toggled by `html.a11y-mode`. Reflows to one column, enlarges + separates
+   targets, stops truncating, and loosens spacing — it reconfigures the layout
+   rather than just scaling it. Composes with the text-size slider. See
+   ACCESSIBILITY_AUDIT.md (claude/accessibility-mode branch). */
+
+/* Reflow: collapse multi-column grids to a single column so enlarged content
+   stacks vertically instead of cramming / overlapping. (grid-cols-1 left as-is.) */
+html.a11y-mode [class*="grid-cols-"]:not(.grid-cols-1) {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+/* Never hide content behind an ellipsis or a fixed-height clip — let it wrap.
+   Chrome opts out via .a11y-keep-truncate (a wrapping app-name in a
+   fixed-height header would overflow the bar). */
+html.a11y-mode .truncate:not(.a11y-keep-truncate) {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+/* Larger tap targets (WCAG 2.5.5 / 2.5.8). Switches keep their designed shape
+   (same role="switch" exclusion as the large-touch rule above). */
+html.a11y-mode button:not([role="switch"]),
+html.a11y-mode [role="button"]:not([role="switch"]) {
+  min-height: 44px;
+  min-width: 44px;
+}
+html.a11y-mode a[class] { min-height: 44px; }
+
+/* Comfortable reading: looser line-height + word wrapping for body text. */
+html.a11y-mode p,
+html.a11y-mode li {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+/* Cap line length for long-form text (WCAG 1.4.8 AAA, ≤~80 chars) so wide
+   screens — landscape especially — don't produce hard-to-track long lines, and
+   add gentle letter/word spacing that aids low-vision reading without looking
+   broken. Max-width is limited to clear prose (p / blockquote) so it can't
+   shrink flex rows, the map canvas, or chat layouts. */
+html.a11y-mode p,
+html.a11y-mode blockquote {
+  max-width: 72ch;
+}
+html.a11y-mode p,
+html.a11y-mode li {
+  letter-spacing: 0.012em;
+  word-spacing: 0.04em;
+}
+
+/* Always-visible, high-contrast focus ring for keyboard / switch users (2.4.7). */
+html.a11y-mode :focus-visible {
+  outline: 3px solid var(--color-primary) !important;
+  outline-offset: 2px !important;
+}
+
+/* App chrome (top header + bottom tab bar) stays a fixed, comfortable size so
+   maxing out the text scale enlarges the page CONTENT, not the navigation bars.
+   Without this, the rem-based header height balloons at 200% text and eats a
+   third of the screen (worst in landscape, where vertical space is scarcest).
+   The bottom-nav outer height is already px-driven (--bottom-nav-height); here
+   we also pin its icons + labels so they can't overflow the bar at large
+   scales. Landscape trims the header further (the decorative wave is already
+   hidden there) — rotating to landscape is the most usable layout for low
+   vision, so we make sure the header doesn't fight it. */
+html.a11y-mode .a11y-header-row { height: 52px !important; }
+html.a11y-mode .a11y-header-row svg { width: 22px !important; height: 22px !important; }
+html.a11y-mode .a11y-header-title { font-size: 18px !important; line-height: 1.2 !important; }
+html.a11y-mode .a11y-bottom-nav svg { width: 22px !important; height: 22px !important; }
+html.a11y-mode .a11y-bottom-nav span { font-size: 11px !important; line-height: 1.1 !important; }
+
+/* Bottom tab labels (classic tab bar + v2 tab strip). A label that doesn't
+   fit its tab — a long custom name, a wide font — breaks at a syllable
+   with a hyphen ("Head-/space") using the page language (i18n.js keeps
+   <html lang> current), falls back to a plain break only for a word the
+   dictionary can't split, and wraps to at most two lines. It never
+   widens its tab, so it can't spill over the neighbouring tabs. */
+.os-tab-label {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  max-width: 100%;
+  min-width: 0;
+  text-align: center;
+  white-space: normal;
+  -webkit-hyphens: auto;
+  hyphens: auto;
+  hyphenate-limit-chars: 6 3 2;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+@media (orientation: landscape) {
+  html.a11y-mode .a11y-header-row { height: 44px !important; }
+  html.a11y-mode .a11y-header-title { font-size: 16px !important; }
+}
+
+/* Honour the OS "reduce motion" setting everywhere (in addition to the manual
+   toggle), per platform guidance — applies regardless of a11y-mode. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── End Accessibility ── */
+
+@keyframes suggestionFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes mentionGlow {
+  0% { box-shadow: 0 0 0 0 hsl(var(--color-primary) / 0.7); }
+  50% { box-shadow: 0 0 0 8px hsl(var(--color-primary) / 0.3); }
+  100% { box-shadow: 0 0 0 0 hsl(var(--color-primary) / 0); }
+}
+
+.mention-highlight {
+  animation: mentionGlow 1s ease-in-out 5;
+  border-color: var(--color-primary);
+}
+
+/* "Jump-to-session" halo — pulses around the AlterBar's avatar when
+   the user double-tapped a dashboard fronter chip and chose "Jump to
+   session". Three 1-second pulses then auto-clears via the inline
+   timer in AlterBar so the rest of the day reads normally. */
+@keyframes alterBarJumpHalo {
+  0%   { box-shadow: 0 0 0 0 hsl(var(--color-primary) / 0.95), 0 0 16px 4px hsl(var(--color-primary) / 0.85); }
+  50%  { box-shadow: 0 0 0 10px hsl(var(--color-primary) / 0.18), 0 0 24px 12px hsl(var(--color-primary) / 0.35); }
+  100% { box-shadow: 0 0 0 0 hsl(var(--color-primary) / 0), 0 0 0 0 hsl(var(--color-primary) / 0); }
+}
+.alter-bar-jump-halo {
+  animation: alterBarJumpHalo 1s ease-in-out 3;
+}
+.a11y-reduce-motion .alter-bar-jump-halo {
+  animation: none;
+  box-shadow: 0 0 0 4px hsl(var(--color-primary) / 0.7);
+}
+
+/* Generic "you just navigated here from a notification" halo —
+   driven by useHighlightScroll. Three soft 1-second pulses so the
+   user can locate the source of whatever notification they tapped.
+   Works on any block (cards, list rows, chips). For round avatar
+   targets, use .alter-bar-jump-halo instead. */
+@keyframes scrollHighlightHalo {
+  0%   { box-shadow: 0 0 0 0 hsl(var(--color-primary) / 0.85), 0 0 14px 4px hsl(var(--color-primary) / 0.5); }
+  50%  { box-shadow: 0 0 0 6px hsl(var(--color-primary) / 0.18), 0 0 22px 10px hsl(var(--color-primary) / 0.3); }
+  100% { box-shadow: 0 0 0 0 hsl(var(--color-primary) / 0), 0 0 0 0 hsl(var(--color-primary) / 0); }
+}
+.scroll-highlight-halo {
+  animation: scrollHighlightHalo 1s ease-in-out 3;
+  position: relative;
+  border-radius: 12px;
+}
+.a11y-reduce-motion .scroll-highlight-halo {
+  animation: none;
+  box-shadow: 0 0 0 3px hsl(var(--color-primary) / 0.7);
+}
+
+/* WYSIWYG editor placeholder */
+.wysiwyg-content:empty::before {
+  content: attr(data-placeholder);
+  color: hsl(var(--muted-foreground));
+  opacity: 0.5;
+  font-style: italic;
+  pointer-events: none;
+}
+.wysiwyg-content blockquote {
+  /* Use the theme's actual primary var (a hex). The old hsl(var(--primary))
+   * referenced an undefined var, so the whole border shorthand was dropped and
+   * a blockquote just looked like slightly-indented text. */
+  border-left: 3px solid var(--color-primary, #6366f1);
+  margin: 4px 0;
+  padding: 4px 12px;
+  font-style: italic;
+  opacity: 0.9;
+}
+/* h1 was missing here, so the rich toolbar's "Heading 1" rendered at body size
+ * ("headline formatting doesn't appear"). Tailwind preflight resets it, so
+ * restore a heading scale like h2/h3 below. */
+.wysiwyg-content h1 { font-size: 1.5rem; font-weight: 700; line-height: 1.2; margin: 8px 0 4px; }
+.wysiwyg-content h2 { font-size: 1.25rem; font-weight: 700; margin: 8px 0 4px; }
+.wysiwyg-content h3 { font-size: 1.05rem; font-weight: 600; margin: 6px 0 3px; }
+/* Tailwind preflight resets list-style to none, so the toolbar's list
+   buttons produced indent-only lines with no bullets/numbers ("the list
+   buttons don't actually put things into a list"). Restore real markers. */
+.wysiwyg-content ul, .wysiwyg-content ol { padding-left: 1.5em; margin: 4px 0; }
+.wysiwyg-content ul { list-style: disc outside; }
+.wysiwyg-content ol { list-style: decimal outside; }
+.wysiwyg-content li { margin: 2px 0; display: list-item; }
+/* Bulletin / comment body — minimal HTML formatting (b, i, u, s, p, ul, ol,
+ * li, br, a). Kept to a single short ruleset so bulletins read naturally
+ * without inheriting heavyweight prose styles.
+ */
+.bulletin-prose p { margin: 0 0 .5em; }
+.bulletin-prose p:last-child { margin-bottom: 0; }
+.bulletin-prose ul,
+.bulletin-prose ol { padding-left: 1.4em; margin: .25em 0; }
+.bulletin-prose ul { list-style: disc outside; }
+.bulletin-prose ol { list-style: decimal outside; }
+.bulletin-prose li { margin: .15em 0; display: list-item; }
+.bulletin-prose a { color: hsl(var(--primary)); text-decoration: underline; }
+/* Tailwind's preflight resets h1–h3 to inherit, so headings inserted from the
+ * rich toolbar rendered at body size ("headings not working"). Restore a
+ * sensible scale scoped to rendered bulletin/comment content. */
+.bulletin-prose h1 { font-size: 1.5em; font-weight: 700; line-height: 1.2; margin: .5em 0 .3em; }
+.bulletin-prose h2 { font-size: 1.25em; font-weight: 700; line-height: 1.25; margin: .5em 0 .3em; }
+.bulletin-prose h3 { font-size: 1.1em; font-weight: 600; line-height: 1.3; margin: .4em 0 .25em; }
+.bulletin-prose blockquote { border-left: 3px solid var(--color-primary, #6366f1); margin: .4em 0; padding: .25em .75em; font-style: italic; opacity: 0.9; }
+
+/* Corner-mode toggle (Settings → Appearance → Corner style). When the
+ * user picks "Sharp" we zero out every Tailwind rounded-* class via a
+ * data attribute on <html>. .rounded-full is explicitly preserved so
+ * avatars, circular badges, and other elements that derive their
+ * identity from being round stay round — squaring those would look
+ * broken, not stylish. Inline border-radius set via the style="…"
+ * prop is left alone too (those are usually intentional one-offs).
+ */
+html[data-corner-mode="sharp"] .rounded,
+html[data-corner-mode="sharp"] .rounded-sm,
+html[data-corner-mode="sharp"] .rounded-md,
+html[data-corner-mode="sharp"] .rounded-lg,
+html[data-corner-mode="sharp"] .rounded-xl,
+html[data-corner-mode="sharp"] .rounded-2xl,
+html[data-corner-mode="sharp"] .rounded-3xl,
+html[data-corner-mode="sharp"] [class*="rounded-t-"],
+html[data-corner-mode="sharp"] [class*="rounded-b-"],
+html[data-corner-mode="sharp"] [class*="rounded-l-"],
+html[data-corner-mode="sharp"] [class*="rounded-r-"],
+html[data-corner-mode="sharp"] [class*="rounded-tl-"],
+html[data-corner-mode="sharp"] [class*="rounded-tr-"],
+html[data-corner-mode="sharp"] [class*="rounded-bl-"],
+html[data-corner-mode="sharp"] [class*="rounded-br-"] {
+  border-radius: 0 !important;
+}
+
+
+/* The header wave costs vertical room, so it hides on a phone held
+   sideways — but "landscape" also describes every desktop monitor, where
+   there is plenty of room and the wave should show. Gate on height. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .wave-hide-short { display: none; }
+}
+
+/* ── UI v2 (opt-in rebuild) ──
+   Hides the classic chrome only when the user has switched v2 on; the
+   --v2-* variables are the customization tokens emitted by uiV2.js. */
+[data-ui-v2="1"] .os-classic-chrome { display: none !important; }
+/* Display options are APP settings, not bar settings. The radius, border
+   width, spacing and highlight colour below reach every component in the
+   app — a card on the Alters page changes with them, not just the chrome.
+   Anything that sets its own value further down the tree still wins,
+   which is how per-widget overrides keep working. */
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) { --radius: var(--v2-radius); }
+
+/* A range slider grabs any touch that lands on it — including a scroll
+   gesture passing through. pan-y hands vertical movement back to the
+   scroller, so only a deliberate horizontal drag changes the value. */
+input[type="range"] { touch-action: pan-y; }
+/* Every slider and checkbox takes the UI highlight (the reported blue
+   sliders were the browser default next to a red-accented app). */
+input[type="range"], input[type="checkbox"], input[type="radio"] { accent-color: var(--v2-accent, var(--color-primary)); }
+
+/* The "Continue setup" chip sits at z-85 — above bottom sheets (z-50).
+   With a sheet open, tapping the chip's X could land on the controls
+   underneath instead. While ANY drawer or dialog is open, the chip steps
+   aside entirely. */
+body:has([data-vaul-drawer][data-state="open"]) .os-setup-chip,
+body:has([role="dialog"][data-state="open"]) .os-setup-chip {
+  display: none;
+}
+
+/* Peeking at the app while Display options is open: the sheet shrinks to
+   the sample, and the dimming overlay steps aside so what you're adjusting
+   is actually visible behind it. */
+/* While a live-adjust sheet is open the page stays fully USABLE — the
+   overlay must neither dim nor eat taps/scrolls. */
+html[data-v2-peek="1"] [data-vaul-overlay] { background: transparent !important; pointer-events: none !important; }
+/* vaul puts pointer-events:none on <body> even for non-modal drawers,
+   which froze every tap and scroll on the page behind the options sheets
+   ("I should be able to scroll the home screen"). */
+html[data-v2-peek="1"] body { pointer-events: auto !important; }
+
+/* Corner radius, for real. Tailwind's rounded-* utilities hardcode their
+   own px values — only `rounded-lg/md/sm` were ever wired to --radius —
+   which is why setting the slider to 0 left most of the app rounded. Every
+   size is now derived from the slider, keeping the relative hierarchy
+   (sm < md < lg < xl < 2xl < 3xl) so a card still reads as softer than a
+   chip at any setting.
+
+   `.rounded-full` is deliberately NOT included, matching the existing
+   Sharp corner mode: avatars, dots and circular badges derive their
+   identity from being round, and squaring them looks broken rather than
+   sharp. Inline radii (per-widget looks) win over all of this, which is
+   how "unless set otherwise" keeps working. */
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) .rounded-sm  { border-radius: calc(var(--v2-radius) * 0.33); }
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) .rounded     { border-radius: calc(var(--v2-radius) * 0.5); }
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) .rounded-md  { border-radius: calc(var(--v2-radius) * 0.65); }
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) .rounded-lg  { border-radius: calc(var(--v2-radius) * 0.8); }
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) .rounded-xl  { border-radius: var(--v2-radius); }
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) .rounded-2xl { border-radius: calc(var(--v2-radius) * 1.35); }
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) .rounded-3xl { border-radius: calc(var(--v2-radius) * 1.8); }
+/* Side- and corner-specific utilities keep their side, and take the
+   slider's value on the corners they actually round. */
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) [class*="rounded-t-"]  { border-top-left-radius: var(--v2-radius); border-top-right-radius: var(--v2-radius); }
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) [class*="rounded-b-"]  { border-bottom-left-radius: var(--v2-radius); border-bottom-right-radius: var(--v2-radius); }
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) [class*="rounded-l-"]  { border-top-left-radius: var(--v2-radius); border-bottom-left-radius: var(--v2-radius); }
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) [class*="rounded-r-"]  { border-top-right-radius: var(--v2-radius); border-bottom-right-radius: var(--v2-radius); }
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) [class*="rounded-tl-"] { border-top-left-radius: var(--v2-radius); }
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) [class*="rounded-tr-"] { border-top-right-radius: var(--v2-radius); }
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) [class*="rounded-bl-"] { border-bottom-left-radius: var(--v2-radius); }
+:is([data-ui-v2="1"], [data-os-layout~="radius"]) [class*="rounded-br-"] { border-bottom-right-radius: var(--v2-radius); }
+
+/* Border width. Tailwind's border utilities hardcode 1px/2px; inside v2
+   they follow the slider instead, so 0 really means "no borders anywhere"
+   and 3 really means heavy. Directional utilities are listed explicitly
+   rather than blanket-setting `border-width`, so a `border-t` divider
+   never grows a full box. */
+:is([data-ui-v2="1"], [data-os-layout~="border"]) .border   { border-width: var(--v2-border-w); }
+:is([data-ui-v2="1"], [data-os-layout~="border"]) .border-2 { border-width: calc(var(--v2-border-w) * 2); }
+:is([data-ui-v2="1"], [data-os-layout~="border"]) .border-t { border-top-width: var(--v2-border-w); }
+:is([data-ui-v2="1"], [data-os-layout~="border"]) .border-b { border-bottom-width: var(--v2-border-w); }
+:is([data-ui-v2="1"], [data-os-layout~="border"]) .border-l { border-left-width: var(--v2-border-w); }
+:is([data-ui-v2="1"], [data-os-layout~="border"]) .border-r { border-right-width: var(--v2-border-w); }
+
+/* Spacing. --v2-density is 1 at the middle setting, so "Medium" is the
+   app exactly as designed; Compact and Wide scale the common padding and
+   gap utilities around it. Only the utilities the app actually leans on
+   are remapped — a curated list beats a blanket rule that would also
+   squash things measured in px for a reason. */
+[data-ui-v2="1"] .p-2 { padding: calc(0.5rem * var(--v2-density, 1)); }
+[data-ui-v2="1"] .p-3 { padding: calc(0.75rem * var(--v2-density, 1)); }
+[data-ui-v2="1"] .p-4 { padding: calc(1rem * var(--v2-density, 1)); }
+[data-ui-v2="1"] .px-3 { padding-left: calc(0.75rem * var(--v2-density, 1)); padding-right: calc(0.75rem * var(--v2-density, 1)); }
+[data-ui-v2="1"] .px-4 { padding-left: calc(1rem * var(--v2-density, 1)); padding-right: calc(1rem * var(--v2-density, 1)); }
+[data-ui-v2="1"] .py-2 { padding-top: calc(0.5rem * var(--v2-density, 1)); padding-bottom: calc(0.5rem * var(--v2-density, 1)); }
+[data-ui-v2="1"] .py-3 { padding-top: calc(0.75rem * var(--v2-density, 1)); padding-bottom: calc(0.75rem * var(--v2-density, 1)); }
+[data-ui-v2="1"] .py-4 { padding-top: calc(1rem * var(--v2-density, 1)); padding-bottom: calc(1rem * var(--v2-density, 1)); }
+[data-ui-v2="1"] .gap-2 { gap: calc(0.5rem * var(--v2-density, 1)); }
+[data-ui-v2="1"] .gap-3 { gap: calc(0.75rem * var(--v2-density, 1)); }
+[data-ui-v2="1"] .gap-4 { gap: calc(1rem * var(--v2-density, 1)); }
+/* Directional padding overrides (pl-9 on a search input with an icon,
+   etc.) must survive the density remap above — without these, the
+   [data-ui-v2] .px-3 rule out-specifies a plain .pl-9 and the icon sits
+   on top of the text (the recurring search-field overlap bug). Same
+   specificity, declared later → the override wins again. */
+[data-ui-v2="1"] .pl-6  { padding-left: 1.5rem; }
+[data-ui-v2="1"] .pl-7  { padding-left: 1.75rem; }
+[data-ui-v2="1"] .pl-8  { padding-left: 2rem; }
+[data-ui-v2="1"] .pl-9  { padding-left: 2.25rem; }
+[data-ui-v2="1"] .pl-10 { padding-left: 2.5rem; }
+[data-ui-v2="1"] .pl-11 { padding-left: 2.75rem; }
+[data-ui-v2="1"] .pl-12 { padding-left: 3rem; }
+[data-ui-v2="1"] .pr-6  { padding-right: 1.5rem; }
+[data-ui-v2="1"] .pr-7  { padding-right: 1.75rem; }
+[data-ui-v2="1"] .pr-8  { padding-right: 2rem; }
+[data-ui-v2="1"] .pr-9  { padding-right: 2.25rem; }
+[data-ui-v2="1"] .pr-10 { padding-right: 2.5rem; }
+[data-ui-v2="1"] .pr-11 { padding-right: 2.75rem; }
+[data-ui-v2="1"] .pr-12 { padding-right: 3rem; }
+[data-ui-v2="1"] .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: calc(0.5rem * var(--v2-density, 1)); }
+[data-ui-v2="1"] .space-y-3 > :not([hidden]) ~ :not([hidden]) { margin-top: calc(0.75rem * var(--v2-density, 1)); }
+[data-ui-v2="1"] .space-y-4 > :not([hidden]) ~ :not([hidden]) { margin-top: calc(1rem * var(--v2-density, 1)); }
+/* Content width + alignment (Display options → Layout). These apply in
+   BOTH layouts — the sheet opens over classic pages too, and a slider that
+   did nothing to the page behind it read as broken (owner report: Planner
+   ignored 1360px). AppLayout sets data-os-layout / data-os-align-x on
+   <html> only once the user has picked a value, so an untouched app keeps
+   its designed widths.
+
+   With a width picked, it is THE page width: <main> is capped to it, and
+   each page's own wrapper cap (.os-page-shell, or a top-level
+   max-w-* mx-auto) is lifted so the page fills that width instead of
+   sitting at its old 42–72rem inside it. Only page-level wrappers (the
+   first two levels under <main>) are lifted — narrow cards deeper down
+   keep their own max width. */
+[data-os-layout~="width"] main.app-content-main {
+  max-width: var(--v2-content-w, 100%);
+  margin-inline: auto;
+}
+[data-os-layout~="width"] main.app-content-main .os-page-shell,
+[data-os-layout~="width"] main.app-content-main > :is(.max-w-lg, .max-w-xl, .max-w-2xl, .max-w-3xl, .max-w-4xl, .max-w-5xl, .max-w-6xl, .max-w-7xl).mx-auto,
+[data-os-layout~="width"] main.app-content-main > * > :is(.max-w-lg, .max-w-xl, .max-w-2xl, .max-w-3xl, .max-w-4xl, .max-w-5xl, .max-w-6xl, .max-w-7xl).mx-auto {
+  max-width: none;
+}
+/* Alignment: which edge the content hugs when it is narrower than the
+   screen — <main> when a width is set, and the page's own wrapper when it
+   is not (so alignment works at "Full" width too). Center is the default. */
+[data-os-align-x="left"] main.app-content-main,
+[data-os-align-x="left"] main.app-content-main .os-page-shell,
+[data-os-align-x="left"] main.app-content-main > :is(.max-w-lg, .max-w-xl, .max-w-2xl, .max-w-3xl, .max-w-4xl, .max-w-5xl, .max-w-6xl, .max-w-7xl).mx-auto,
+[data-os-align-x="left"] main.app-content-main > * > :is(.max-w-lg, .max-w-xl, .max-w-2xl, .max-w-3xl, .max-w-4xl, .max-w-5xl, .max-w-6xl, .max-w-7xl).mx-auto { margin-left: 0; }
+[data-os-align-x="right"] main.app-content-main,
+[data-os-align-x="right"] main.app-content-main .os-page-shell,
+[data-os-align-x="right"] main.app-content-main > :is(.max-w-lg, .max-w-xl, .max-w-2xl, .max-w-3xl, .max-w-4xl, .max-w-5xl, .max-w-6xl, .max-w-7xl).mx-auto,
+[data-os-align-x="right"] main.app-content-main > * > :is(.max-w-lg, .max-w-xl, .max-w-2xl, .max-w-3xl, .max-w-4xl, .max-w-5xl, .max-w-6xl, .max-w-7xl).mx-auto { margin-right: 0; }
+/* Font size & style, body + header (unified edit popup, SIZE section).
+   Headings pick up the header multiplier for tailwind's calc()-based
+   sizes. Styles apply via data attributes that only EXIST when the user
+   picked one — so the app's own designed weights stay untouched by
+   default (a var()-based version would have knocked out per-heading
+   font-semibold through the cascade even when unset). */
+:is(h1, h2, h3, h4, h5, h6, .font-display) {
+  /* Not gated on v2: the same Text & layout sheet styles the classic
+     home. 1 (no change) until the user sets a heading size. */
+  --v2-hmult: var(--v2-heading-scale, 1);
+}
+/* When a custom heading font is chosen, EVERY heading uses it — not just
+   the few elements carrying the font-display utility. Attribute-gated so
+   the app's own mixed heading fonts stay untouched until the user picks. */
+html[data-heading-font] :is(h1, h2, h3, h4, h5, h6) { font-family: var(--font-display); }
+/* Flags combine freely (the attribute is space-separated, matched with
+   ~=): bold + italic + underline + strikethrough + small caps. */
+/* BODY flags must not leak into HEADINGS (they have their own toggles).
+   Inherited props (italic / small caps / bold) are set on the root and
+   then reset on headings unless the header flag says the same. Text
+   decoration can't be cancelled by a descendant once an ancestor sets it,
+   so underline / strike are applied per text element and skip anything
+   inside a heading. */
+[data-v2-bstyle~="bold"] { font-weight: 700; }
+[data-v2-bstyle~="italic"] { font-style: italic; }
+[data-v2-bstyle~="smallcaps"] { font-variant-caps: small-caps; }
+[data-v2-bstyle~="italic"]:not([data-v2-hstyle~="italic"]) :is(h1, h2, h3, h4, h5, h6, .font-display) { font-style: normal; }
+[data-v2-bstyle~="smallcaps"]:not([data-v2-hstyle~="smallcaps"]) :is(h1, h2, h3, h4, h5, h6, .font-display) { font-variant-caps: normal; }
+[data-v2-bstyle~="underline"] :where(p, li, td, th, dt, dd, label, a, button, summary, input, textarea, select, blockquote, figcaption, small, em, strong, b, i, u, code, pre, time, legend, span):not(:is(h1, h2, h3, h4, h5, h6, .font-display), :is(h1, h2, h3, h4, h5, h6, .font-display) *) { text-decoration-line: underline; }
+[data-v2-bstyle~="strike"] :where(p, li, td, th, dt, dd, label, a, button, summary, input, textarea, select, blockquote, figcaption, small, em, strong, b, i, u, code, pre, time, legend, span):not(:is(h1, h2, h3, h4, h5, h6, .font-display), :is(h1, h2, h3, h4, h5, h6, .font-display) *) { text-decoration-line: line-through; }
+[data-v2-bstyle~="underline"][data-v2-bstyle~="strike"] :where(p, li, td, th, dt, dd, label, a, button, summary, input, textarea, select, blockquote, figcaption, small, em, strong, b, i, u, code, pre, time, legend, span):not(:is(h1, h2, h3, h4, h5, h6, .font-display), :is(h1, h2, h3, h4, h5, h6, .font-display) *) { text-decoration-line: underline line-through; }
+[data-v2-hstyle~="bold"] :is(h1, h2, h3, h4, h5, h6, .font-display) { font-weight: 700; }
+[data-v2-hstyle~="italic"] :is(h1, h2, h3, h4, h5, h6, .font-display) { font-style: italic; }
+[data-v2-hstyle~="underline"] :is(h1, h2, h3, h4, h5, h6, .font-display) { text-decoration-line: underline; }
+[data-v2-hstyle~="strike"] :is(h1, h2, h3, h4, h5, h6, .font-display) { text-decoration-line: line-through; }
+[data-v2-hstyle~="underline"][data-v2-hstyle~="strike"] :is(h1, h2, h3, h4, h5, h6, .font-display) { text-decoration-line: underline line-through; }
+[data-v2-hstyle~="smallcaps"] :is(h1, h2, h3, h4, h5, h6, .font-display) { font-variant-caps: small-caps; }
+/* Desktop: the fixed side rail sits outside the flow, so the shell is
+   inset by its width. Phones keep the bottom bar and no inset. */
+@media (min-width: 1024px) {
+  [data-ui-v2="1"] { padding-left: var(--v2-rail-pad, 0px); }
+  [data-ui-v2="1"][data-rail-side="right"] { padding-left: 0; padding-right: var(--v2-rail-pad, 0px); }
+  /* The top bar spans the FULL window, over the rail — the rail already
+     starts below --v2-status-h expecting it to. Without this the root's
+     rail padding pushed the bar right and left a bare corner above the
+     rail. Negative margin bleeds it back across the padding. */
+  [data-ui-v2="1"] header[data-v2-topbar] { margin-left: calc(-1 * var(--v2-rail-pad, 0px)); }
+  [data-ui-v2="1"][data-rail-side="right"] header[data-v2-topbar] { margin-left: 0; margin-right: calc(-1 * var(--v2-rail-pad, 0px)); }
+}
+
+/* ── Overlay layering guard ─────────────────────────────────────────
+   While a vaul bottom sheet is open it sets pointer-events:none on
+   <body>, which silently kills every overlay that portals to body
+   (action menus, level rails/pickers, session popovers). Anything that
+   stacks ABOVE a sheet is by definition meant to be interactive — so
+   body-level fixed portals get their pointer events back. Vaul's own
+   dismiss overlay sits above the page content it blocks, so the sheet's
+   modal behaviour for the page itself is unchanged. */
+body > .fixed { pointer-events: auto; }
+
+/* ── Widget contract (docs/widget-contract.md) ──────────────────────
+   Inside a widget, text utilities are EM, not rem. A widget's per-look
+   "Text size" works by setting a % font-size on the wrapper; rem sizes
+   are relative to the page root and ignore it, so every text-* below is
+   remapped to its em equivalent (identical rendering at 100%). Bracketed
+   sizes can't be caught here — widget code uses text-[0.625em]-style
+   brackets, never rem (contract rule). */
+/* "Center" centres a widget's ELEMENTS, the way a text editor's centre
+   button centres a block — not just the text inside each element.
+   `align-items: center` alone can't do it: a row that is already full
+   width has no free space to be centred in. So shrink each of the box's
+   children to its content and let the stack's align-items (plus the auto
+   margins, for boxes that aren't flex) do the centring.
+
+   Scoped to [data-widget-box], which marks the ONE visible box per widget
+   the widget contract guarantees. That box is either an element inside the
+   widget (Section, or a tile root spreading boxStyle) or — for classic
+   registry widgets, which have no v2 box of their own — the widget wrapper
+   itself, which paints the box for them (def.paintBox). Hence the two
+   selectors: the box as a descendant, and the wrapper AS the box.
+
+   We centre the box's CHILDREN and never the box, so a centred widget
+   keeps its size and position on the grid. Alignment must not read as
+   having moved the widget — the user places widgets themselves.
+
+   Note: a grid-shaped widget (the month calendar) shrinks to its natural
+   width when centred. That is what centring a block does; "Fill" is the
+   way back. */
+[data-widget-content][data-halign="center"] [data-widget-box] > *,
+[data-widget-content][data-halign="center"][data-widget-box] > * {
+  width: fit-content;
+  max-width: 100%;
+  margin-inline: auto;
+}
+
+/* Per-widget "Horizontal: Center" (widget options → Alignment).
+   The halign variable only reaches Section's `align-items`, which cannot
+   move a row that is already full width, and the wrapper's `text-align`
+   only reaches ordinary text — the UA stylesheet pins form controls to
+   `text-align: start`, so they ignore it. Carry the centring across to
+   them explicitly. Left/Right don't need this: they set `direction`,
+   which re-bases alignment for form controls too. */
+[data-widget-content][data-halign="center"] input,
+[data-widget-content][data-halign="center"] textarea,
+[data-widget-content][data-halign="center"] select,
+[data-widget-content][data-halign="center"] [contenteditable="true"] {
+  text-align: center;
+}
+
+[data-widget-content] .text-xs   { font-size: 0.75em; }
+[data-widget-content] .text-sm   { font-size: 0.875em; }
+[data-widget-content] .text-base { font-size: 1em; }
+[data-widget-content] .text-lg   { font-size: 1.125em; }
+[data-widget-content] .text-xl   { font-size: 1.25em; }
+
+/* A widget's own "Border width" scales the borders INSIDE it — buttons,
+   cards, dividers (owner ask; the box shell is "Element outline" now).
+   Gated on [data-own-bw], which the canvas sets only when the widget's
+   look defines borderW, so nothing changes until the user does. These
+   out-specify the [data-ui-v2] app-wide remaps on purpose. */
+[data-widget-content][data-own-bw] .border   { border-width: var(--v2-own-border-w); }
+[data-widget-content][data-own-bw] .border-2 { border-width: calc(var(--v2-own-border-w) * 2); }
+[data-widget-content][data-own-bw] .border-t { border-top-width: var(--v2-own-border-w); }
+[data-widget-content][data-own-bw] .border-b { border-bottom-width: var(--v2-own-border-w); }
+[data-widget-content][data-own-bw] .border-l { border-left-width: var(--v2-own-border-w); }
+[data-widget-content][data-own-bw] .border-r { border-right-width: var(--v2-own-border-w); }
+
+/* A widget's "Text color" must also reach CLASSED text — nearly every
+   line in a widget carries text-foreground or text-muted-foreground,
+   which beat inherited color. When the look sets a text color,
+   widgetLook.js emits --v2-text / --v2-text-muted; otherwise these
+   fall back to exactly the theme values the classes normally resolve to. */
+[data-widget-content] .text-foreground       { color: var(--v2-text, var(--color-text-primary)); }
+[data-widget-content] .text-muted-foreground { color: var(--v2-text-muted, var(--color-text-secondary)); }
+
+/* The home board swipes pages by dragging — text selection would fight the
+   gesture, so the board is select-none as a whole while anything the user
+   actually types into stays selectable. */
+.os-home-swipe input,
+.os-home-swipe textarea,
+.os-home-swipe [contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Elements that own a press-and-hold gesture (level rails, hold menus,
+   drag-selection cells) mark themselves data-own-hold. Text selection or
+   the long-press callout starting DURING the hold cancels the pointer
+   stream and kills the gesture — so on these elements, and everything
+   inside them, selection is off at the stylesheet level where no inline
+   style can clobber it. */
+[data-own-hold], [data-own-hold] * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Landscape phones: barely 375px of height, so the v2 bottom chrome slims
+   down — smaller tab strip and command keys. (The quick-actions drawer
+   still opens; it just costs less.) Scoped to the bars themselves because
+   the size tokens arrive as INLINE variables on the app root — a rule on
+   the root loses to them, but redefining on a descendant shadows the
+   inherited value. */
+@media (max-height: 480px) {
+  [data-ui-v2="1"] nav.fixed.bottom-0,
+  [data-ui-v2="1"] header {
+    --v2-strip-h: 38px;
+    --v2-cmd-size: 32px;
+    --v2-status-h: 32px;
+  }
+  [data-ui-v2="1"] nav.fixed.bottom-0 [role="tab"] span {
+    font-size: 0.5625rem;
+  }
+}
+
+/* Home-board edit mode: the edit bar (z-70) sits ABOVE the vaul sheets
+   (z-50) by design — so every bottom-docked sheet pads itself clear of
+   the bar's published height, keeping its last rows reachable. The var
+   only exists while editing, so this is a no-op everywhere else. */
+html[data-home-edit] [data-vaul-drawer][data-vaul-drawer-direction="bottom"] {
+  /* !important: DrawerContent sets its safe-area padding INLINE, which
+     would silently win over this rule. The inset is folded back in. */
+  padding-bottom: calc(var(--os-sab) + var(--home-edit-bar-h, 0px)) !important;
+}
+
+/* Status-banner widget ticker — two copies of the text scroll by half the
+   track width for a seamless loop; duration is set inline per note length. */
+@keyframes os-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.os-marquee-track {
+  animation: os-marquee linear infinite;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .os-marquee-track { animation: none; }
+}
+
+/* Controls that hide until hover would be unreachable on touch screens.
+   Hidden only where the device can actually hover; always visible otherwise. */
+@media (hover: hover) {
+  .hover-reveal { opacity: 0; }
+  .group:hover .hover-reveal, .group:focus-within .hover-reveal, .hover-reveal:focus-visible { opacity: 1; }
+}
