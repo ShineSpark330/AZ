@@ -1,0 +1,25 @@
+[
+  {
+    "collection": "profile",
+    "botName": "Bot",
+    "userName": "",
+    "color": "#8b5cf6",
+    "emoji": "",
+    "size": 140,
+    "breathe": true,
+    "preset": "gentle",
+    "traits": { "warmth": 80, "playful": 30, "formal": 35, "meta": 50, "talkative": 55 },
+    "idleSeconds": 60,
+    "typewriter": true,
+    "learn": true,
+    "notes": "",
+    "topics": { "count": true, "alters": true, "history": true, "journal": true, "tracking": true, "chat": true, "bulletin": true, "timeline": true },
+    "visits": 0,
+    "messages": 0,
+    "firstMet": "",
+    "lastSeen": ""
+  },
+  { "collection": "idle", "text": "If you'd like me to say something different when it's quiet, you can add your own lines in Customize." },
+  { "collection": "idle", "text": "I wonder what the weather is like where you are. I can't check, but I like wondering." },
+  { "collection": "greet", "text": "Hey, you're back. Good to see you." }
+]

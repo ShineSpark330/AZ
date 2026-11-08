@@ -1,0 +1,850 @@
+import React, { useState, useEffect, useRef, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation, useNavigate, useOutletContext } from "react-router-dom";
+import { base44 } from "@/api/base44Client";
+import { withHighlightParam } from "@/lib/useHighlightScroll";
+import { motion, AnimatePresence } from "framer-motion";
+import { CheckSquare } from "lucide-react";
+import QuickActionsMenu from "@/components/dashboard/QuickActionsMenu";
+import ExperimentalDashboard from "@/pages/ExperimentalDashboard";
+import BackupHealthNotice from "@/components/dashboard/BackupHealthNotice";
+import EmptyAppRescueNotice from "@/components/dashboard/EmptyAppRescueNotice";
+import BackupDecisionStep from "@/components/onboarding/BackupDecisionStep";
+import { hasBackupDecision } from "@/lib/autoBackup";
+import { isPreviewActive } from "@/lib/previewMode";
+import { EXPERIMENTAL_HOME_ENABLED, UI_V2_ENABLED } from "@/lib/featureFlags";
+import HomeV2 from "@/v2/pages/HomeV2";
+import SetFrontSheet from "@/components/fronting/SetFrontSheet";
+import ClassicHomeCanvas from "@/components/dashboard/ClassicHomeCanvas";
+import CriticalPinnedPlans from "@/components/dashboard/CriticalPinnedPlans";
+import UnresolvedPlansCard from "@/components/dashboard/UnresolvedPlansCard";
+import ActivityEditor from "@/components/activities/ActivityEditor";
+import NotificationHistoryModal from "@/components/dashboard/NotificationHistoryModal";
+import NewUiBanner from "@/components/dashboard/NewUiBanner";
+import FeedbackSurveyBanner from "@/components/feedback/FeedbackSurveyBanner";
+import { markQuickActionUsedToday } from "@/lib/dailyTaskSystem";
+import QuickTaskComposer from "@/components/bulletin/QuickTaskComposer";
+import QuickCheckInModal from "@/components/emotions/QuickCheckInModal";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import SystemSwitcherPanel from "@/components/systems/SystemSwitcherPanel";
+import { hasMultipleSystems } from "@/lib/systems";
+import DashboardLayoutSettings, { HomeScreenResetDialog } from "@/components/settings/DashboardLayoutSettings";
+import { pickPrimarySystemSettings } from "@/lib/systemSettingsSingleton";
+
+// Setup progress lives on the system's settings row (v0.369.0) — read and
+// written only through src/lib/onboardingState.js. The older per-system
+// browser flag is still read there, and still written for older versions.
+import { ONBOARDING_DONE_KEY, isOnboardingDone, markOnboardingDone, recordOnboarding, storedOnboarding } from "@/lib/onboardingState";
+import { settledInForSurvey } from "@/lib/setupModel";
+export { ONBOARDING_DONE_KEY };
+import { systemHasPersonalData } from "@/lib/setupGate";
+import { useTerms } from "@/lib/useTerms";
+import { runQuickAction } from "@/lib/quickActionRunner";
+import { mentionLogsQuery, pendingMentionsFor } from "@/lib/mentionNotices";
+
+// The setup guide is big and opens only when asked for (v0.357.0).
+const TourModal = React.lazy(() => import("@/components/onboarding/TourModal"));
+
+// THE host for the "open-set-front" event — the only listener, whichever
+// UI is on. (It used to be v2-only while CurrentFronters also listened;
+// with the fronting panel placed on a v2 board both fired, and two sheets
+// opened stacked.)
+function V2SetFrontHost({ alters }) {
+  const [open, setOpen] = useState(false);
+  const { data: sessions = [] } = useQuery({
+    queryKey: ["activeFront"],
+    queryFn: () => base44.entities.FrontingSession.filter({ is_active: true }),
+    enabled: open,
+  });
+  useEffect(() => {
+    const show = () => setOpen(true);
+    const hide = () => setOpen(false);
+    window.addEventListener("open-set-front", show);
+    window.addEventListener("open-set-front-close", hide);
+    return () => {
+      window.removeEventListener("open-set-front", show);
+      window.removeEventListener("open-set-front-close", hide);
+    };
+  }, []);
+  if (!open) return null;
+  return (
+    <SetFrontSheet open onClose={() => setOpen(false)} alters={alters}
+      currentSession={sessions.find((x) => x.is_primary) || sessions[0] || null} />
+  );
+}
+
+// Hosts the home screen's restore-to-default dialog, opened by the ⚙
+// menu's "Reset home screen…" entry via a window event.
+function HomeResetHost() {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const show = () => setOpen(true);
+    window.addEventListener("os-classic-reset-home", show);
+    return () => window.removeEventListener("os-classic-reset-home", show);
+  }, []);
+  if (!open) return null;
+  return <HomeScreenResetDialog open onClose={() => setOpen(false)} />;
+}
+
+export default function Dashboard() {
+  const queryClient = useQueryClient();
+  const [showEmotionModal, setShowEmotionModal] = useState(false);
+  const [showStartActivity, setShowStartActivity] = useState(false);
+  // One composer for anything you intend to do. The old quick-task and
+  // quick-plan links both land here.
+  const [showQuickTask, setShowQuickTask] = useState(false);
+  // "More options" on the quick composer: the same thing, continued in the
+  // full plan form (repeats, reminders, location, who it's for) with what
+  // you already typed carried over.
+  const [planDraft, setPlanDraft] = useState(null);
+  // Stable requests for the shared activity editor (it re-seeds whenever
+  // the request object changes).
+  const startActivityReq = useMemo(
+    () => (showStartActivity ? { create: true, mode: "now", start: new Date(), minutes: null } : null),
+    [showStartActivity]
+  );
+  const planDraftReq = useMemo(() => {
+    if (!planDraft) return null;
+    const d = planDraft.date ? new Date(`${planDraft.date}T00:00:00`) : new Date();
+    const [h, m] = String(planDraft.time || "").split(":").map((n) => parseInt(n, 10));
+    if (planDraft.time) d.setHours(h || 0, m || 0, 0, 0); else d.setHours(9, 0, 0, 0);
+    return {
+      create: true, mode: "plan", start: d,
+      minutes: planDraft.time ? (planDraft.durationMinutes || 60) : null,
+      untimed: !planDraft.time,
+      name: planDraft.title || "", notes: planDraft.note || "",
+      categoryIds: planDraft.categoryId ? [planDraft.categoryId] : [],
+    };
+  }, [planDraft]);
+  const [showNotifHistory, setShowNotifHistory] = useState(false);
+  const [highlightBulletinId, setHighlightBulletinId] = useState(null);
+  const [showTour, setShowTour] = useState(false);
+  // Once opened, the guide stays mounted so closing it plays its exit.
+  const [tourMounted, setTourMounted] = useState(false);
+  useEffect(() => { if (showTour) setTourMounted(true); }, [showTour]);
+  const [tourOpenAt, setTourOpenAt] = useState(null); // "start" for Start over
+  const { setShowFeatureTour } = useOutletContext() || {};
+  // Setup is now single-flow (v0.84.9): Guide (TourModal) auto-opens
+  // for anyone who hasn't finished it, terms+disclaimer live as steps
+  // inside it. `pendingFromNewSystem` is a one-shot set by "create new
+  // system" — a fresh system's catalogue is empty even though the
+  // device-wide gate keys may be satisfied, so it gets the Guide too.
+  const [pendingFromNewSystem] = useState(() => {
+    try {
+      if (localStorage.getItem("symphony_onboarding_pending_v1")) {
+        localStorage.removeItem("symphony_onboarding_pending_v1");
+        return true;
+      }
+    } catch { /* storage off */ }
+    return false;
+  });
+  const { data: settings = [], isFetched: settingsFetched } = useQuery({
+    queryKey: ["systemSettings"],
+    queryFn: () => base44.entities.SystemSettings.list()
+  });
+  // Safety net for the backup decision (v0.240.0): first-run answers it in
+  // StorageModeSetup, but users from before the step existed, and setup
+  // paths that reload the page, arrive here without one. Ask once, before
+  // the Guide — the two would otherwise stack. Preview mode is a sandbox
+  // and never asks.
+  const [backupDecided, setBackupDecided] = useState(() => {
+    try { return hasBackupDecision() || isPreviewActive(); } catch { return true; }
+  });
+  // Auto-open the Guide once per visit, and only on a system that hasn't
+  // been set up: never over data a person wrote (setupGate), never when
+  // the system's own record (or an older browser flag) says it's done.
+  // Waits for the backup decision so the two never stack, and for the
+  // settings row so the record can be read.
+  const autoOpenDecided = useRef(false);
+  useEffect(() => {
+    if (autoOpenDecided.current || !backupDecided) return;
+    if (pendingFromNewSystem) { autoOpenDecided.current = true; setShowTour(true); return; }
+    if (!settingsFetched) return;
+    autoOpenDecided.current = true;
+    if (isPreviewActive()) return;
+    if (isOnboardingDone(pickPrimarySystemSettings(settings))) return;
+    // A system that already holds data has been set up: record that
+    // instead of re-running the Guide over it.
+    if (systemHasPersonalData()) {
+      markOnboardingDone().then(() => queryClient.invalidateQueries({ queryKey: ["systemSettings"] }));
+      return;
+    }
+    setShowTour(true);
+  }, [pendingFromNewSystem, backupDecided, settingsFetched, settings]); // eslint-disable-line react-hooks/exhaustive-deps
+  const surveyReady = (() => {
+    try {
+      return backupDecided && !showTour && !isPreviewActive()
+        && isOnboardingDone(pickPrimarySystemSettings(settings))
+        // …and only once the system has used the app for a few days —
+        // right after setup is too soon to ask how it's going.
+        && (() => {
+          const row = pickPrimarySystemSettings(settings);
+          return settledInForSurvey({
+            onboarding: storedOnboarding(row),
+            createdDate: row?.created_date || null,
+            hasSettingsRow: !!row,
+          });
+        })();
+    } catch { return false; }
+  })();
+  const [showPreview, setShowPreview] = useState(() => localStorage.getItem("preview_open") === "true");
+
+
+
+  const handleTogglePreview = () => {
+    const newState = !showPreview;
+    setShowPreview(newState);
+    localStorage.setItem("preview_open", newState ? "true" : "false");
+  };
+
+  // Closing the welcome steps records nothing: they resume next time on
+  // a system that's still empty. Finishing or "Skip setup" is recorded by
+  // the steps themselves (TourModal → onboardingState).
+  const handleTourClose = () => {
+    setShowTour(false);
+    setTourOpenAt(null);
+  };
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [showDashLayout, setShowDashLayout] = useState(false);
+
+  useEffect(() => {
+    const open = (e) => {
+      // Widgets can ask for a specific section (diary, symptoms, …).
+      setEmotionModalInitialSection(e?.detail?.section || null);
+      setShowEmotionModal(true);
+    };
+    const close = () => setShowEmotionModal(false);
+    const openLayout = () => setShowDashLayout(true);
+    // The UI-v2 status line's notification LED opens the inbox from any
+    // register — the modal is hosted here.
+    const openNotif = () => setShowNotifHistory(true);
+    // The v2 cog menu's "Setup" — jumps straight to the checklist
+    // step, not the welcome/terms pages (those are for first runs).
+    const openGuide = () => navigate("/settings#setup");
+    window.addEventListener("open-quick-checkin", open);
+    window.addEventListener("open-quick-checkin-close", close);
+    window.addEventListener("symphony-open-dashboard-layout", openLayout);
+    window.addEventListener("open-notification-history", openNotif);
+    window.addEventListener("open-setup-guide", openGuide);
+    return () => {
+      window.removeEventListener("open-quick-checkin", open);
+      window.removeEventListener("open-quick-checkin-close", close);
+      window.removeEventListener("symphony-open-dashboard-layout", openLayout);
+      window.removeEventListener("open-notification-history", openNotif);
+      window.removeEventListener("open-setup-guide", openGuide);
+    };
+  }, []);
+
+  useEffect(() => {
+    const bid = location.state?.highlightBulletinId;
+    if (bid) {
+      setHighlightBulletinId(bid);
+      setTimeout(() => setHighlightBulletinId(null), 5000);
+      window.history.replaceState({}, "");
+    }
+  }, [location.state]);
+
+  // PWA home-screen shortcuts launch the dashboard with ?action=… so the
+  // user lands directly in the relevant modal. Strip the param after firing
+  // so a refresh doesn't keep re-opening the modal.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const action = params.get("action");
+    const onboardingParam = params.get("onboarding");
+    if (!action && !onboardingParam) return;
+    if (action === "quick-checkin") {
+      // A Shortcuts "open check-in section" action, fired away from home,
+      // carries its section along.
+      setEmotionModalInitialSection(params.get("section") || null);
+      setShowEmotionModal(true);
+    } else if (action === "set-front") {
+      window.dispatchEvent(new CustomEvent("open-set-front"));
+    } else if (action === "start-activity") {
+      // The UI-v2 command strip's capture keys arrive via these params —
+      // capture modals are hosted here, so keys navigate-with-param.
+      setShowStartActivity(true);
+    } else if (action === "start-symptom") {
+      setEmotionModalInitialSection("symptoms");
+      setShowEmotionModal(true);
+    } else if (action === "quick-task" || action === "quick-plan" || action === "quick-thing") {
+      setShowQuickTask(true);
+    } else if (action === "notifications") {
+      setShowNotifHistory(true);
+    } else if (action === "setup-guide") {
+      // Older links to the setup checklist land on its successor.
+      navigate("/settings#setup", { replace: true });
+      return;
+    }
+    // Settings → Setup → Start over runs the welcome steps again from step
+    // 1 (any alter may want to; it never deletes or replaces anything, and
+    // the record of setup being done stays).
+    if (onboardingParam === "replay") {
+      recordOnboarding({ restarted_at: new Date().toISOString() });
+      setTourOpenAt("start");
+      setShowTour(true);
+    }
+    params.delete("action");
+    params.delete("section");
+    params.delete("onboarding");
+    const newSearch = params.toString();
+    navigate({ pathname: location.pathname, search: newSearch ? `?${newSearch}` : "" }, { replace: true });
+  }, [location.search]);
+
+  const handleNotifClick = (mentionLog) => {
+    setShowNotifHistory(false);
+    const path = mentionLog.navigate_path || "/";
+    // Local highlight stays as-is for dashboard bulletins — the
+    // BulletinBoard already reads highlightBulletinId from state and
+    // pulses the matching card.
+    if (path === "/" && mentionLog.source_id) {
+      setHighlightBulletinId(mentionLog.source_id);
+      setTimeout(() => setHighlightBulletinId(null), 5000);
+      return;
+    }
+    // Cross-page navigation — append `?highlight=<source_id>` so the
+    // destination page's useHighlightScroll hook can scroll-to +
+    // pulse the matching `[data-highlight-id="…"]` element for 3s.
+    // Falls back to plain navigation if the notification has no
+    // source_id (rare; e.g. system-wide announcements).
+    navigate(withHighlightParam(path, mentionLog.source_id));
+  };
+
+  const { data: alters = [] } = useQuery({
+    queryKey: ["alters"],
+    queryFn: () => base44.entities.Alter.list()
+  });
+
+  const { data: sessions = [] } = useQuery({
+    queryKey: ["frontHistory", "recent50"],
+    queryFn: () => base44.entities.FrontingSession.list("-start_time", 50)
+  });
+
+  const terms = useTerms();
+  const systemName = pickPrimarySystemSettings(settings)?.system_name || `Your ${terms.system}`;
+  // Tap the dashboard title to switch systems — only when more than one exists,
+  // so single-system users see no change.
+  const multiSystem = hasMultipleSystems();
+  const [showSystemSwitcher, setShowSystemSwitcher] = useState(false);
+
+  // (dashboard_layout used to be resolved here for the classic column
+  // render; ClassicHomeCanvas owns the home layout now via classic_home,
+  // with dashboard_layout kept as its seed source.)
+
+  const { data: mentionLogs = [] } = useQuery(mentionLogsQuery);
+
+  // Extract currently active alter IDs from active FrontingSession records.
+  // Supports both new individual model (alter_id per row, is_primary flag)
+  // and legacy grouped model (primary_alter_id + co_fronter_ids). For the
+  // new model, the primary session is whichever row has is_primary === true
+  // — not just the first one in `-start_time` order, since that can put a
+  // co-fronter (the most recent join) ahead of the actual primary.
+  const activeSessions = sessions.filter((s) => s.is_active);
+  let frontingAlterIds = [];
+  let currentAlterId = null;
+
+  if (activeSessions.length > 0) {
+    // New individual model: each session is one alter
+    if (activeSessions.some(s => s.alter_id)) {
+      // Dedup — a stale/duplicate active session per alter must not list the
+      // same fronter twice (drives the "Kane, Kane" authorship glitch).
+      frontingAlterIds = [...new Set(activeSessions.map((s) => s.alter_id).filter(Boolean))];
+      const primarySess = activeSessions.find(s => s.alter_id && s.is_primary);
+      currentAlterId = primarySess?.alter_id || frontingAlterIds[0] || null;
+    } else {
+      // Legacy grouped model: sessions group multiple alters
+      const firstSession = activeSessions[0];
+      currentAlterId = firstSession.primary_alter_id || null;
+      frontingAlterIds = [firstSession.primary_alter_id, ...(firstSession.co_fronter_ids || [])].filter(Boolean);
+    }
+  }
+
+  const [emotionModalInitialSection, setEmotionModalInitialSection] = useState(null);
+
+  // Live clock — updates every minute
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  // ── Quick Actions (long press) ────────────────────────────────────────────
+  const holdTimerRef = useRef(null);
+  const holdStartRef = useRef(null);
+  const timerFiredRef = useRef(false);
+  const showQuickActionsRef = useRef(false);
+  // Pointer-origin tracking so the hold cancels if the user's finger moves
+  // (e.g. they start to scroll mid-press) — see onPointerMove handler on
+  // the button.
+  const holdOriginRef = useRef({ x: 0, y: 0 });
+  const [holdProgress, setHoldProgress] = useState(0);
+  const [showQuickActions, setShowQuickActions] = useState(false);
+
+  // (Holding a bar key / the apps button, the OS "open quick actions"
+  // shortcut and actions that need input first all open the menu through
+  // QuickActionsHost now — in place on any page, not by coming home. This
+  // state is only the classic Quick Check-In button's own hold menu.)
+
+  const { data: quickActionsRaw = [] } = useQuery({
+    queryKey: ["quickActions"],
+    queryFn: () => base44.entities.QuickAction.list("order"),
+  });
+  const sortedQuickActions = [...quickActionsRaw].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+  const startHold = (e) => {
+    // If menu already open, close it instead
+    if (showQuickActionsRef.current) {
+      showQuickActionsRef.current = false;
+      setShowQuickActions(false);
+      return;
+    }
+    timerFiredRef.current = false;
+    holdStartRef.current = Date.now();
+    holdOriginRef.current = { x: e.clientX ?? 0, y: e.clientY ?? 0 };
+
+    const tick = () => {
+      if (!holdStartRef.current) return;
+      const elapsed = Date.now() - holdStartRef.current;
+      const progress = Math.min(100, (elapsed / 500) * 100);
+      setHoldProgress(progress);
+      if (progress < 100) {
+        holdTimerRef.current = setTimeout(tick, 50);
+      } else {
+        timerFiredRef.current = true;
+        holdStartRef.current = null;
+        setHoldProgress(0);
+        if (navigator.vibrate) navigator.vibrate(50);
+        showQuickActionsRef.current = true;
+        setShowQuickActions(true);
+      }
+    };
+    holdTimerRef.current = setTimeout(tick, 50);
+  };
+
+  const endHold = (e) => {
+    // Prevent the synthetic click event mobile browsers fire after pointerup —
+    // without this, the click lands on the modal's date field which is now
+    // positioned where the button was.
+    e?.preventDefault?.();
+    if (!holdStartRef.current) return;
+    clearTimeout(holdTimerRef.current);
+    holdStartRef.current = null;
+    setHoldProgress(0);
+    if (!timerFiredRef.current && !showQuickActionsRef.current) {
+      setShowEmotionModal(true);
+    }
+  };
+
+  // Cancel an in-progress hold if the finger moves more than a few pixels —
+  // a real scroll gesture starts with a press and then moves, and we don't
+  // want that to count as "the user is holding here". 12px of slop allows
+  // for natural finger jitter.
+  const moveHold = (e) => {
+    if (!holdStartRef.current || timerFiredRef.current) return;
+    const SLOP = 12;
+    const dx = (e.clientX ?? 0) - holdOriginRef.current.x;
+    const dy = (e.clientY ?? 0) - holdOriginRef.current.y;
+    if (dx * dx + dy * dy > SLOP * SLOP) {
+      clearTimeout(holdTimerRef.current);
+      holdStartRef.current = null;
+      setHoldProgress(0);
+    }
+  };
+
+  const executeQuickAction = async (action, extraData = {}) => {
+    showQuickActionsRef.current = false;
+    setShowQuickActions(false);
+    markQuickActionUsedToday();
+    await runQuickAction(action, extraData, {
+      queryClient,
+      terms,
+      navigate,
+      openCheckin: (section) => { setEmotionModalInitialSection(section); setShowEmotionModal(true); },
+      openSetFront: () => window.dispatchEvent(new CustomEvent("open-set-front")),
+      // Actions that need input first (OS launcher path) reopen the menu.
+      reopenMenu: () => window.dispatchEvent(new CustomEvent("open-quick-actions")),
+    });
+  };
+
+  // Deep-link from the native OS launcher shortcut. nativeQuickActions
+  // pushes each QuickAction as an Android home-screen shortcut whose
+  // intent URL is /?quickAction=<id>. When the user taps one of those
+  // shortcuts, the Dashboard mounts (cold launch) or react-router
+  // navigates here with the new query (warm launch via appUrlOpen).
+  //
+  // We watch location.search rather than using a one-shot ref so a
+  // second shortcut tap in the same session re-triggers — the old
+  // ref-based guard meant only the FIRST shortcut after launch did
+  // anything (the user reported this: "stoned symptom triggers but
+  // daily tasks and other things will not"). The URL itself is the
+  // lock now: we clear `?quickAction=…` from history before running
+  // the action so a refresh / re-render won't repeat it.
+  useEffect(() => {
+    if (!quickActionsRaw || quickActionsRaw.length === 0) return; // wait for data
+    let qaId;
+    try {
+      qaId = new URLSearchParams(location.search).get("quickAction");
+    } catch { return; }
+    if (!qaId) return;
+    const qa = quickActionsRaw.find(a => a.id === qaId);
+    // Clean the URL whether or not we found a matching record — a
+    // stale id shouldn't keep retrying. Use navigate(replace:true) so
+    // react-router's location.search updates too (window.history
+    // alone wouldn't, which would make tapping the same shortcut
+    // twice in a row look like a no-op the second time).
+    try {
+      const params = new URLSearchParams(location.search);
+      params.delete("quickAction");
+      const qs = params.toString();
+      navigate(location.pathname + (qs ? `?${qs}` : "") + location.hash, { replace: true });
+    } catch { /* non-fatal */ }
+    if (!qa) return;
+    executeQuickAction(qa);
+  }, [quickActionsRaw, location.search]);
+
+  // ── Experimental homescreen (v0.90.0, Phase 1) ──────────────────
+  // The flag lives on SystemSettings.experimental_home so it's synced,
+  // backed up, and preset-able. This component's hooks all run in both
+  // modes (branching happens in JSX only), so deep links / quick actions
+  // keep working regardless of which homescreen is active.
+  // EXPERIMENTAL_HOME_ENABLED gates the whole feature at build time. When
+  // false, anyone who previously enabled it falls back to the classic
+  // dashboard (their saved layout is untouched and returns if re-enabled).
+  const uiV2On = UI_V2_ENABLED && pickPrimarySystemSettings(settings)?.ui_v2?.enabled === true;
+  const experimentalOn = !uiV2On && EXPERIMENTAL_HOME_ENABLED && pickPrimarySystemSettings(settings)?.experimental_home?.enabled === true;
+
+  // ── The widget board as a swipe-left page of the CLASSIC home ──
+  // Classic home is the leftmost "page"; swiping left (or the board
+  // button in the header) opens the SAME v2 board (ui_v2_home fields —
+  // nothing is migrated or duplicated). Swiping right past the board's
+  // first page comes back. ui_v2.homeDefault === "board" opens on the
+  // board instead, so board-as-homescreen stays one setting away.
+  const classicBoardAvailable = UI_V2_ENABLED && !uiV2On && !experimentalOn && !!pickPrimarySystemSettings(settings);
+  const [boardOpen, setBoardOpen] = useState(false);
+  // Which way the last classic↔board move went (1 = into the board,
+  // -1 = back out, 0 = no move yet) — drives the same slide-in the board
+  // uses between its own pages, so the transition feels like paging, not
+  // a hard cut. A ref: it's read at the mount the state flip causes.
+  const boardAnimDir = useRef(0);
+  const openBoard = () => { boardAnimDir.current = 1; setBoardOpen(true); };
+  const closeBoard = () => { boardAnimDir.current = -1; setBoardOpen(false); };
+  // The classic home renders ON the board canvas (ClassicHomeCanvas):
+  // its edit mode, drawer and gestures ARE the widget board's, scoped to
+  // the "os-classic" events — no separate editor lives here any more.
+  // The HOME button means the CLASSIC home (owner call) — unless a board
+  // page has "overwrite as homescreen" on (ui_v2.homeDefault === "board"),
+  // in which case Home lands on the board. Every navigation gets a fresh
+  // location.key, including same-path ones, so this catches a Home tap
+  // while already on "/" without touching each button.
+  const lastLocKey = useRef(location.key);
+  useEffect(() => {
+    if (location.key === lastLocKey.current) return;
+    lastLocKey.current = location.key;
+    if (pickPrimarySystemSettings(settings)?.ui_v2?.homeDefault === "board") {
+      if (!boardOpen && classicBoardAvailable) openBoard();
+    } else if (boardOpen) {
+      closeBoard();
+    }
+     
+  }, [location.key]);
+  const boardShowing = classicBoardAvailable && boardOpen;
+  const showClassic = !uiV2On && !experimentalOn && !boardShowing;
+  const bootedBoardDefault = useRef(false);
+  useEffect(() => {
+    if (bootedBoardDefault.current || !classicBoardAvailable) return;
+    bootedBoardDefault.current = true;
+    if (pickPrimarySystemSettings(settings)?.ui_v2?.homeDefault === "board") setBoardOpen(true);
+  }, [classicBoardAvailable, settings]);
+
+  // Pressing Home while the board is open must leave the board.
+  //
+  // The board is local state on a route that IS "/", so navigating Home
+  // re-renders the same component and nothing happened — the button
+  // looked dead, and with no swipe (a mouse, or anyone who can't drag)
+  // the board was a dead end. react-router mints a fresh location.key on
+  // every navigation, including one to the path you are already on, so
+  // that is the signal. The first run is skipped so this can't fight the
+  // homeDefault === "board" boot above.
+  const lastNavKey = useRef(null);
+  useEffect(() => {
+    if (lastNavKey.current === null) { lastNavKey.current = location.key; return; }
+    if (lastNavKey.current === location.key) return;
+    lastNavKey.current = location.key;
+    if (location.pathname === "/") closeBoard();
+  }, [location.key, location.pathname]);
+  // The swipe-left-to-board gesture lives on the canvas now (the classic
+  // home is an ExperimentalDashboard with onExitRight={openBoard}), so
+  // it tracks and animates exactly like paging between board pages.
+  // The board's own header/menu actions can be requested while CLASSIC is
+  // showing (the hosted top bar's "Edit widget board", the promo banner,
+  // a pending key set on another page). Bridge them: park the action as
+  // the board's pending key, open the board, and it picks the action up
+  // on mount — exactly as if it had been open all along.
+  useEffect(() => {
+    if (!classicBoardAvailable || boardOpen) return undefined;
+    try {
+      // The APP LIST is not a board feature — the classic canvas has the
+      // same drawer. Bridging it to the board hopped the user off their
+      // home page just to see the apps (owner report), so apps requests
+      // stay on the classic home; only genuinely board-owned actions
+      // (edit board, its display options, bar options) still open it.
+      if (sessionStorage.getItem("symphony_v2_open-apps")) {
+        // Translate the parked request to the classic canvas's own key —
+        // it consumes it on mount and opens its drawer.
+        const parkedAt = sessionStorage.getItem("symphony_v2_open-apps");
+        sessionStorage.removeItem("symphony_v2_open-apps");
+        // Carry the original timestamp so the hand-off can't refresh a
+        // stale request into a live one.
+        sessionStorage.setItem("symphony_classic_open-apps", String(Number(parkedAt) > 1 ? parkedAt : Date.now()));
+      }
+      // A Display-options request parked while on another page opens the
+      // classic sheet here, not the board (see onHomeSettings below).
+      if (sessionStorage.getItem("symphony_v2_home-settings") === "1") {
+        sessionStorage.removeItem("symphony_v2_home-settings");
+        setTimeout(() => window.dispatchEvent(new CustomEvent("os-classic-home-settings")), 300);
+      }
+      const pending = ["edit-home", "bar-options"]
+        .some((a) => sessionStorage.getItem(`symphony_v2_${a}`) === "1");
+      if (pending) { openBoard(); return undefined; }
+    } catch { /* storage off */ }
+    const mk = (action) => () => {
+      try { sessionStorage.setItem(`symphony_v2_${action}`, "1"); } catch { /* storage off */ }
+      openBoard();
+    };
+    const onEdit = mk("edit-home");
+    const onApps = () => window.dispatchEvent(new CustomEvent("os-classic-open-apps"));
+    // Display options apply everywhere (they aren't a board feature), so
+    // on the classic home they open the classic canvas's own settings
+    // sheet — the same unified popup — in place. Hopping to the widget
+    // board to show them moved the user off the page they were styling.
+    const onHomeSettings = () => window.dispatchEvent(new CustomEvent("os-classic-home-settings"));
+    const onOpenBoard = () => { openBoard(); };
+    window.addEventListener("os-v2-edit-home", onEdit);
+    window.addEventListener("os-v2-open-apps", onApps);
+    window.addEventListener("os-v2-home-settings", onHomeSettings);
+    window.addEventListener("os-open-widget-board", onOpenBoard);
+    return () => {
+      window.removeEventListener("os-v2-edit-home", onEdit);
+      window.removeEventListener("os-v2-open-apps", onApps);
+      window.removeEventListener("os-v2-home-settings", onHomeSettings);
+      window.removeEventListener("os-open-widget-board", onOpenBoard);
+    };
+     
+  }, [classicBoardAvailable, boardOpen]);
+  const hasUnreadMentions = pendingMentionsFor(mentionLogs, frontingAlterIds).length > 0;
+
+  // Handler/data bundle handed to the experimental view + its widgets, so
+  // chrome widgets and the action bar reuse Dashboard's plumbing (the
+  // modals they open are all hosted below in this component).
+  const homeApi = {
+    systemName,
+    multiSystem,
+    openSystemSwitcher: () => setShowSystemSwitcher(true),
+    // "Setup": unfinished setup resumes its steps; finished setup opens
+    // Settings → Setup (what's set up, Start over).
+    openTour: () => (isOnboardingDone(pickPrimarySystemSettings(settings))
+      ? navigate("/settings#setup") : setShowTour(true)),
+    openFeatureTour: () => setShowFeatureTour(true),
+    openNotifHistory: () => setShowNotifHistory(true),
+    // The page_buttons widget's board button — only offered while the
+    // board actually is a swipe away (classic mode).
+    ...(classicBoardAvailable ? { openWidgetBoard: openBoard } : {}),
+    // The page buttons' setup dot: lit until setup has been finished.
+    checklistIncomplete: !isOnboardingDone(pickPrimarySystemSettings(settings)),
+    hasUnreadMentions,
+    alters,
+    currentAlterId,
+    frontingAlterIds,
+    highlightBulletinId,
+    hold: { onPointerDown: startHold, onPointerMove: moveHold, onPointerUp: endHold },
+    holdProgress,
+    holdActive: showQuickActions,
+    quickOn: {
+      startActivity: () => setShowStartActivity(true),
+      startSymptom: () => { setEmotionModalInitialSection("symptoms"); setShowEmotionModal(true); },
+      quickTask: () => setShowQuickTask(true),
+      quickPlan: () => setShowQuickTask(true),
+      quickThing: () => setShowQuickTask(true),
+    },
+    // In v2 the menu is hosted at page level (below) instead of inside the
+    // quick-checkin widget — that widget may not be on the board at all,
+    // which is why the new UI had no way to reach saved quick actions.
+    quickActionsSlot: uiV2On ? null : (
+      <AnimatePresence>
+        {showQuickActions && (
+          <QuickActionsMenu
+            actions={sortedQuickActions}
+            onAction={executeQuickAction}
+            onClose={() => { showQuickActionsRef.current = false; setShowQuickActions(false); }}
+          />
+        )}
+      </AnimatePresence>
+    ),
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="pt-0 sm:pt-0">
+
+      {/* The system heading (name + date/time) is a WIDGET on the canvas
+          now (system_header — seeded first, configurable like any other
+          card); this row keeps only the page chrome buttons. The system
+          switcher dialog stays mounted here — the widget opens it via
+          api.openSystemSwitcher. */}
+      <Dialog open={showSystemSwitcher} onOpenChange={setShowSystemSwitcher}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{terms.Systems}</DialogTitle>
+          </DialogHeader>
+          <SystemSwitcherPanel />
+        </DialogContent>
+      </Dialog>
+      {/* The corner buttons (board / guide / notifications) are the
+          page_buttons WIDGET on the canvas now; only their modals and
+          dropdown host state stay here. */}
+
+      {/* Critical/unresolved plans + the notification modal are SHARED
+          between the classic and experimental views — safety surfaces
+          shouldn't depend on which homescreen is active. Under v2 the
+          board's own notice stack (V2Notices) carries both, inside the
+          board's stacking context where the wallpaper can't cover them —
+          these classic cards sit outside it and would render invisibly
+          under the wallpaper. */}
+      {/* The home screen and the widget board both carry these in their
+          own V2Notices stack (inside the canvas, where the wallpaper can't
+          cover them). Only the old experimental home still uses the
+          classic cards. */}
+      {experimentalOn && <BackupHealthNotice className="mb-3" />}
+      {experimentalOn && <EmptyAppRescueNotice className="mb-3" />}
+      {/* The "Top/Bottom of Dashboard" upcoming-plans surfaces are the
+          upcoming_top / upcoming_bottom WIDGETS on the home canvas — never
+          mount them here as well (0.243.x did, and "Coming up" showed
+          twice, the extra copy above the header). */}
+      {experimentalOn && <CriticalPinnedPlans />}
+      {experimentalOn && <UnresolvedPlansCard />}
+      <NotificationHistoryModal
+        open={showNotifHistory}
+        onClose={() => setShowNotifHistory(false)}
+        alters={alters}
+        frontingAlterIds={frontingAlterIds}
+        onNotifClick={handleNotifClick}
+      />
+
+      {/* The creator's feedback survey invitation — only for people past
+          first-run setup, never in preview mode or over the Guide. */}
+      <FeedbackSurveyBanner ready={surveyReady} />
+
+      {/* ── UI v2 Home (rebuilt from the function tree) ── */}
+      {uiV2On && <HomeV2 settingsRow={pickPrimarySystemSettings(settings) || null} api={homeApi} />}
+
+      {/* The widget board as the classic home's swipe-left page — the
+          SAME board, same saved layout; swiping right past its first
+          page (or a board's own exit) returns to classic. */}
+      {boardShowing && (
+        <motion.div
+          key="classic-board"
+          // The SAME slide the board uses between its own pages, so
+          // entering it from classic feels like paging, not a hard cut.
+          initial={boardAnimDir.current === 0 ? false : { x: 72, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          transition={{ duration: 0.18, ease: "easeOut" }}
+        >
+          <HomeV2 settingsRow={pickPrimarySystemSettings(settings) || null} api={homeApi} onExitLeft={closeBoard} />
+        </motion.div>
+      )}
+      <V2SetFrontHost alters={alters} />
+      {/* Restore-to-default for the home screen — reachable from the ⚙
+          menu's "Reset home screen…" (and mirrored in Settings). */}
+      <HomeResetHost />
+
+      {/* ── Experimental phone-like homescreen (opt-in) ── */}
+      {experimentalOn && (
+        <ExperimentalDashboard settingsRow={pickPrimarySystemSettings(settings) || null} api={homeApi} />
+      )}
+
+      {/* The classic home ON the board canvas — same component, edit
+          mode, drawer and gestures as the widget board, editing its own
+          classic_home layout (seeded once from dashboard_layout). Swiping
+          left past its last page slides onto the widget board. */}
+      {showClassic && (
+      <motion.div
+        // Sliding back FROM the board mirrors the board's own page slide;
+        // a plain first load (dir 0) doesn't animate.
+        initial={boardAnimDir.current === -1 ? { x: -72, opacity: 0 } : false}
+        animate={{ x: 0, opacity: 1 }}
+        transition={{ duration: 0.18, ease: "easeOut" }}>
+        <div className="mb-3">
+          <NewUiBanner onOpenBoard={classicBoardAvailable ? openBoard : null} />
+        </div>
+        <ClassicHomeCanvas
+          settingsRow={pickPrimarySystemSettings(settings) || null}
+          api={homeApi}
+          onOpenBoard={classicBoardAvailable ? openBoard : null}
+        />
+      </motion.div>
+      )}
+
+      {!backupDecided && (
+        <Dialog open modal>
+          <DialogContent
+            showCloseButton={false}
+            onInteractOutside={(e) => e.preventDefault()}
+            onEscapeKeyDown={(e) => e.preventDefault()}
+            aria-describedby={undefined}
+            className="max-w-md"
+          >
+            <DialogTitle className="sr-only">Keep a backup copy?</DialogTitle>
+            <BackupDecisionStep onDone={() => setBackupDecided(true)} />
+          </DialogContent>
+        </Dialog>
+      )}
+      {(showTour || tourMounted) && (
+        <React.Suspense fallback={null}>
+          <TourModal open={showTour} onClose={handleTourClose} onDone={handleTourClose} openAt={tourOpenAt} />
+        </React.Suspense>
+      )}
+      <QuickCheckInModal
+        isOpen={showEmotionModal}
+        onClose={() => { setShowEmotionModal(false); setEmotionModalInitialSection(null); }}
+        alters={alters}
+        currentFronterIds={frontingAlterIds}
+        initialSection={emotionModalInitialSection} />
+
+      {/* "Start an activity" (quick actions bar / command strip) → the shared
+          activity editor, opened on "Still going". */}
+      <ActivityEditor request={startActivityReq} onClose={() => setShowStartActivity(false)} />
+      <Dialog open={showQuickTask} onOpenChange={(v) => !v && setShowQuickTask(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
+              <CheckSquare className="w-4 h-4" /> Add something to do
+            </DialogTitle>
+          </DialogHeader>
+          <QuickTaskComposer
+            frontingAlterIds={frontingAlterIds}
+            onSaved={() => setShowQuickTask(false)}
+            hideCancelButton
+            moreOptions={(draft) => { setShowQuickTask(false); setPlanDraft(draft); }}
+          />
+        </DialogContent>
+      </Dialog>
+
+
+      {/* A to-do's "More options" → the shared editor on "Coming up", with
+          what was already typed carried over. */}
+      <ActivityEditor request={planDraftReq} onClose={() => setPlanDraft(null)} />
+
+      {/* "Customize dashboard" (header cog) → the section drag/drop layout
+          editor in a popup. Reuses the exact component from Settings →
+          Appearance → Layout → Dashboard. */}
+      <Dialog open={showDashLayout} onOpenChange={setShowDashLayout}>
+        <DialogContent className="max-w-md max-h-[88vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Customize dashboard</DialogTitle>
+          </DialogHeader>
+          <DashboardLayoutSettings />
+        </DialogContent>
+      </Dialog>
+
+    </motion.div>);
+
+}
