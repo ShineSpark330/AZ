@@ -1,0 +1,21 @@
+{
+  "format": "oceans-symphony-mod",
+  "formatVersion": 1,
+  "id": "bot-companion",
+  "name": "Bot companion",
+  "version": "1.0.0",
+  "author": "Apeiron Zetta",
+  "description": "A companion that lives in the app and knows it. It remembers what you tell it, and, if you allow it on the Mods page, what's in your app: how many alters there are, journals and check-ins, tracking, chat, the bulletin board and the timeline. You shape its personality, idle talk and looks. It runs fully on your device, with no internet, and it is a script, not a real mind: it only knows what you give it.",
+  "permissions": ["data:read"],
+  "dataScopes": [
+    "count:Alter", "Alter", "Group",
+    "SystemChangeEvent", "Activity", "Task",
+    "JournalEntry", "EmotionCheckIn", "SymptomCheckIn", "StatusNote", "AlterNote",
+    "FrontingSession", "Sleep", "Location",
+    "SystemChatChannel", "SystemChatMessage",
+    "Bulletin", "BulletinComment"
+  ],
+  "pages": [
+    { "id": "bot", "title": "Bot" }
+  ]
+}

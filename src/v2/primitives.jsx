@@ -1,0 +1,197 @@
+// UI v2 primitives — the entire component vocabulary of the new shell.
+//
+// Deliberately tiny: pages are built from Page > Section > Row and almost
+// nothing else. New primitives are added only when a pattern repeats on a
+// second page. No decoration; sizing/spacing/borders read the --v2-*
+// customization tokens so everything here is user-tunable by construction.
+
+import React from "react";
+
+// The display mode a widget is rendering at, so shared primitives can
+// answer it without every widget threading the prop through. Widgets that
+// implement their own minimal/expanded rendering just ignore this.
+export const WidgetModeContext = React.createContext("normal");
+export const useWidgetMode = () => React.useContext(WidgetModeContext);
+
+// Per-widget chrome the board decides, not the widget: whether the
+// widget's name (its Section heading) shows, and the name the person gave
+// it, which replaces the widget's own heading (owner decision, v0.283.0).
+// Blank keeps the widget's heading, including ones that change, like a
+// date. Set from the widget options sheet (settings.hideLabel / .label).
+export const WidgetChromeContext = React.createContext({ hideLabel: false, label: "" });
+export const useWidgetLabelHidden = () => !!React.useContext(WidgetChromeContext)?.hideLabel;
+export const useWidgetChrome = () => React.useContext(WidgetChromeContext) || {};
+
+// "How many rows at this size" — one rule instead of each widget guessing:
+// minimal keeps it short, expanded shows about twice as much.
+export function rowsForMode(mode, base) {
+  const n = Math.max(1, parseInt(base, 10) || 5);
+  if (mode === "minimal") return Math.max(1, Math.min(3, n));
+  if (mode === "expanded") return n * 2;
+  return n;
+}
+
+export function Page({ title, sub, children }) {
+  return (
+    <div className="py-3" style={{ display: "flex", flexDirection: "column", gap: "calc(var(--v2-space, 6px) * 2)" }}>
+      {title && (
+        <header>
+          <h1 className="text-lg font-semibold leading-tight">{title}</h1>
+          {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
+        </header>
+      )}
+      {children}
+    </div>
+  );
+}
+
+// THE visible box (widget contract, docs/widget-contract.md): the one
+// element per widget that consumes the box look variables. Section spreads
+// it; tile-shaped widgets (app tiles, folders, quick links) spread it on
+// their own root. `borderFallback: false` is for tiles, which are
+// borderless until the user asks for a border.
+export function boxStyle({ borderFallback = true, padFallback = true } = {}) {
+  // Box border chain: per-side vars → the widget's own "Element outline"
+  // (outlineW) → the app-wide border token. Per-widget "Border width"
+  // (borderW) no longer reaches the box — it scales the borders INSIDE
+  // the widget instead (index.css [data-own-bw] remaps).
+  const bw = borderFallback ? "var(--v2-border-w, 1px)" : "var(--v2-border-w, 0px)";
+  return {
+    borderTopWidth: `var(--v2-border-w-t, var(--v2-own-outline-w, ${bw}))`,
+    borderRightWidth: `var(--v2-border-w-r, var(--v2-own-outline-w, ${bw}))`,
+    borderBottomWidth: `var(--v2-border-w-b, var(--v2-own-outline-w, ${bw}))`,
+    borderLeftWidth: `var(--v2-border-w-l, var(--v2-own-outline-w, ${bw}))`,
+    borderStyle: "var(--v2-border-style, solid)",
+    borderColor: borderFallback
+      ? "var(--v2-border-color, color-mix(in srgb, var(--color-muted) 60%, transparent))"
+      : "var(--v2-border-color, transparent)",
+    borderRadius: "var(--v2-radius, 8px)",
+    boxShadow: "var(--v2-shadow, none)",
+    background: "var(--v2-widget-bg, transparent)",
+    // User-built effects (Appearance → Effects). Both no-ops when unset.
+    backgroundImage: "var(--v2-widget-gradient, none)",
+    backdropFilter: "var(--v2-widget-blur, none)",
+    WebkitBackdropFilter: "var(--v2-widget-blur, none)",
+    // padFallback: false = flush until the user sets padding (text widgets).
+    // Per-side vars (Advanced widget options) override the uniform pad on
+    // their side only; unset sides inherit --v2-pad as before.
+    padding: padFallback
+      ? "var(--v2-pad-t, var(--v2-pad, calc(var(--v2-space, 6px) * 1.5))) var(--v2-pad-r, var(--v2-pad, calc(var(--v2-space, 6px) * 1.5))) var(--v2-pad-b, var(--v2-pad, calc(var(--v2-space, 6px) * 1.5))) var(--v2-pad-l, var(--v2-pad, calc(var(--v2-space, 6px) * 1.5)))"
+      : "var(--v2-pad-t, var(--v2-pad, 0px)) var(--v2-pad-r, var(--v2-pad, 0px)) var(--v2-pad-b, var(--v2-pad, 0px)) var(--v2-pad-l, var(--v2-pad, 0px))",
+  };
+}
+
+// The board's "Down" alignment for a widget whose box is NOT a Section:
+// spread on the box (which must fill the widget, h-full) and put the
+// content in ONE child, so the content keeps its own block layout and the
+// box moves it up, to the middle or down ("safe" = top when it overflows).
+// These boxes always sat at the top, so they read only the alignment the
+// person actually picked (--v2-widget-valign-set), never the board's
+// centred default — an untouched widget looks exactly as it did.
+export const valignBoxStyle = () => ({
+  display: "flex",
+  flexDirection: "column",
+  justifyContent: "var(--v2-widget-valign-set, flex-start)",
+});
+
+export function Section({ label, action, center, children }) {
+  const chrome = useWidgetChrome();
+  // Only a widget that draws a heading gets the person's name in it — a
+  // headingless widget doesn't grow one.
+  const ownName = typeof chrome.label === "string" ? chrome.label.trim() : "";
+  if (label && ownName) label = ownName;
+  const showLabel = !!label && !chrome.hideLabel;
+  return (
+    // Fills whatever box it's given — a widget resized taller should LOOK
+    // taller, not sit content-sized inside a bigger empty cell. min-h-0 so
+    // the list below can scroll instead of forcing the box open.
+    <section className="h-full flex flex-col min-h-0" data-widget-box="1" style={boxStyle()}>
+      {(showLabel || action) && (
+        <div className={`flex items-baseline ${showLabel ? "justify-between" : "justify-end"} mb-1 flex-shrink-0`}>
+          {/* data-widget-label: the options sheet looks for it to know this
+              widget has a name it can hide. */}
+          {showLabel && <h2 data-widget-label="" className="text-[0.6875em] font-semibold uppercase tracking-wide text-muted-foreground">{label}</h2>}
+          {action}
+        </div>
+      )}
+      <div className="min-h-0 flex-1 overflow-y-auto"
+        style={{
+          display: "flex", flexDirection: "column",
+          gap: "calc(var(--v2-space, 6px) * 0.75)",
+          // For non-list content (the breathing circle) that should sit in
+          // the middle of the box rather than stack from the top.
+          // Otherwise the board's per-widget alignment decides where rows
+          // sit in the box (--v2-widget-valign, default centered; "safe"
+          // falls back to top when the content overflows).
+          // "Across" aligns the rows INSIDE the box (stretch = full width,
+          // the default). The box itself always fills the widget — this
+          // used to sit on the widget wrapper, which shrank the visible
+          // box instead of aligning its contents.
+          ...(center
+            ? { alignItems: "center", justifyContent: "center" }
+            : {
+                justifyContent: "var(--v2-widget-valign, flex-start)",
+                alignItems: "var(--v2-widget-halign, stretch)",
+              }),
+        }}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+// One list row: [left] primary — secondary [right]. Tappable if onClick.
+// `holdProps` lets a caller attach the press-and-hold gesture grammar (the
+// fronting-level rail) to a row without every list re-implementing the row.
+export function Row({ left, primary, secondary, right, onClick, title, holdProps }) {
+  const Tag = onClick ? "button" : "div";
+  // Minimal means the answer and nothing else: no icon or avatar column, no
+  // qualifier. The row keeps its name and its right-hand value.
+  const mode = useWidgetMode();
+  if (mode === "minimal") { left = null; secondary = null; }
+  return (
+    <Tag
+      type={onClick ? "button" : undefined}
+      onClick={onClick}
+      title={title}
+      {...(holdProps || {})}
+      className={`flex items-center gap-2 text-left w-full min-h-[32px] ${onClick ? "hover:bg-muted/40 -mx-1 px-1" : ""}`}
+      style={onClick ? { borderRadius: "var(--v2-radius, 8px)" } : undefined}
+    >
+      {left}
+      {/* The name is what identifies the row, so it keeps the space and the
+          qualifier is the first thing to give way in a narrow widget. */}
+      <span className="text-sm truncate min-w-0">{primary}</span>
+      {secondary && <span className="text-xs text-muted-foreground truncate shrink-[3] min-w-0">{secondary}</span>}
+      {right && <span className="ml-auto text-xs text-muted-foreground flex-shrink-0 tabular-nums">{right}</span>}
+    </Tag>
+  );
+}
+
+export function Muted({ children }) {
+  return <p className="text-xs text-muted-foreground">{children}</p>;
+}
+
+// Small inline text button — the only action style on v2 pages.
+export function TextAction({ onClick, children }) {
+  return (
+    <button type="button" onClick={onClick}
+      className="text-xs font-medium text-primary hover:underline">
+      {children}
+    </button>
+  );
+}
+
+// Colored presence dot (member color).
+export function Dot({ color, active = true, ring = false }) {
+  const c = color || "hsl(var(--muted-foreground))";
+  return (
+    <span aria-hidden="true" className="w-2 h-2 rounded-full flex-shrink-0"
+      style={{
+        background: c,
+        opacity: active ? 1 : 0.4,
+        // A ring is how a row says "this one leads" without spending words.
+        boxShadow: ring ? `0 0 0 2px color-mix(in srgb, ${c} 45%, transparent)` : undefined,
+      }} />
+  );
+}
