@@ -1,9 +1,0 @@
-[
-  { "collection": "settings", "columns": 4, "labels": true, "whenMissing": "ask" },
-  { "collection": "shortcut", "name": "YouTube", "package": "com.google.android.youtube", "link": "", "emoji": "▶️", "color": "#ef4444", "group": "", "order": 0 },
-  { "collection": "shortcut", "name": "Spotify", "package": "com.spotify.music", "link": "", "emoji": "🎵", "color": "#22c55e", "group": "", "order": 1 },
-  { "collection": "shortcut", "name": "Chrome", "package": "com.android.chrome", "link": "", "emoji": "🌐", "color": "#0ea5e9", "group": "", "order": 2 },
-  { "collection": "shortcut", "name": "Gmail", "package": "com.google.android.gm", "link": "", "emoji": "✉️", "color": "#f97316", "group": "", "order": 3 },
-  { "collection": "shortcut", "name": "Maps", "package": "com.google.android.apps.maps", "link": "", "emoji": "🗺️", "color": "#14b8a6", "group": "", "order": 4 },
-  { "collection": "shortcut", "name": "Play Store", "package": "com.android.vending", "link": "", "emoji": "🛍️", "color": "#6366f1", "group": "", "order": 5 }
-]
